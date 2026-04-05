@@ -1,7 +1,7 @@
 #!/bin/bash
 # Please not that script was tested only with trade212 broker. If you need to make it work with other brokers supported by https://github.com/dickwolff/Export-To-Ghostfolio try to use run-all-universal.sh script instead.
 
-set -e
+set -e -o pipefail
 
 # Load environment variables from .env file and export them
 if [ -f .env ]; then
@@ -55,6 +55,7 @@ for prefix in "${!accounts[@]}"; do
     echo "  📄 Processing file: $csv_name"
 
     # Preparation: Clean stale root-level JSONs and temp artifacts
+    mkdir -p temp
     rm -f out/ghostfolio-trading212-*.json
     rm -f temp/*.csv
 
@@ -137,7 +138,11 @@ for prefix in "${!accounts[@]}"; do
         
         printf "%s_%s_%s\t%s\n", date, ticker, qty, $0
       }
-    }' "$csv_file" | sort -k1,1 > temp/csv_data.txt
+    }' "$csv_file" 2>temp/verify_error.txt | sort -k1,1 > temp/csv_data.txt || {
+       cat temp/verify_error.txt
+       echo "  🚫 Verification skipped for this file."
+       continue
+    }
 
     # Filter out data and keep only keys for 'comm' comparison
     cut -f1 temp/csv_data.txt > temp/csv_keys.txt

@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -e -o pipefail
 
 # Load environment variables from .env file and export them
 if [ -f .env ]; then
@@ -53,6 +53,7 @@ for prefix in "${!accounts[@]}"; do
     echo "  📄 Processing broker file: $csv_name"
 
     # Preparation
+    mkdir -p temp
     rm -f out/ghostfolio-*.json
     rm -f temp/*.csv
     cp "$csv_file" "temp/$csv_name"
@@ -136,7 +137,7 @@ for prefix in "${!accounts[@]}"; do
         
         printf "%s_%s_%s\t%s\n", date, ticker, qty, $0
       }
-    }' "$csv_file" | sort -k1,1 > temp/csv_data.txt 2>temp/verify_error.txt || {
+    }' "$csv_file" 2>temp/verify_error.txt | sort -k1,1 > temp/csv_data.txt || {
        cat temp/verify_error.txt
        echo "  🚫 Verification skipped for this file."
        continue
