@@ -31,8 +31,7 @@ Your final directory structure should look like this:
     ├── out/              # Ghostfolio-compatible JSONs land here
     ├── temp/             # temporary directory used by the conversion script
     ├── t212_fetch.py     # Main fetcher script
-    ├── run-all.sh        # Sync script for Trading 212
-    ├── run-all-universal.sh # Universal sync script
+    ├── run-all.sh        # Universal sync and verification script
     └── systemdunits/     # Services and timers for automation
 ```
 
@@ -49,17 +48,12 @@ The core Python script for automated transaction retrieval from Trading 212 via 
 - **Flow**: After fetching, it automatically triggers `run-all.sh`.
 
 ### run-all.sh
-A Bash script optimized for Trading 212 to Ghostfolio synchronization.
+A universal Bash script for syncing CSV exports to Ghostfolio.
 - **Account Discovery**: Automatically finds all prefixed accounts in `.env`.
 - **Docker Integration**: Launches the `dickwolff/export-to-ghostfolio` container for each account.
-- **Verification**: Cross-verifies the resulting JSON against the source CSV to ensure every single transaction was correctly imported.
-- **Organization**: Moves completed imports to `out/account_name/`.
-
-### run-all-universal.sh
-A "smart" version of the sync script designed for advanced users with multiple brokers.
-- **Universal Support**: Works with 26+ brokers supported by the Export-To-Ghostfolio project (Revolut, IBKR, DEGIRO, etc.).
-- **Smart Verification**: Automatically detects column headers (Date, Symbol, Quantity) in any CSV format to perform import validation.
-- **Use Case**: Use this if you are manually adding CSV exports from other brokers into the `scripts/input/` folder.
+- **Smart Verification**: Automatically detects column headers (Date, Symbol, Quantity) in any CSV format to cross-verify the resulting JSON against the source CSV.
+- **Universal Support**: Works with 26+ brokers supported by the Export-To-Ghostfolio project (Trading 212, Revolut, IBKR, DEGIRO, etc.).
+- **Organization**: Moves completed imports to `out/account_name/` and archives processed CSVs to `input/done/`.
 
 ### systemdunits/t212-ghostfolio.service
 A Linux systemd service unit that defines *how* to run the synchronization. It calls `t212_fetch.py` using the dedicated Python virtual environment.
@@ -109,7 +103,7 @@ PREFIX2_API_KEY=your_prefix2_api_key_here
 PREFIX2_API_SECRET=your_prefix2_api_secret_here
 
 # --- Ghostfolio Settings ---
-GHOSTFOLIO_URL=http://localhost:3333
+GHOSTFOLIO_URL=http://host.docker.internal:3333
 GHOSTFOLIO_SECRET=your_ghostfolio_secret_here
 
 # --- Ghostfolio Runtime Options ---
@@ -164,13 +158,10 @@ python3 t212_fetch.py
 The **first run** (bootstrap) will:
 1.  **Auto-detect**: Find the date of your very first transaction.
 2.  **Full Fetch**: Download your entire history (this may take a few minutes due to T212 API rate limits).
-3.  **Save & Import**: Save CSVs to `scripts/input/` and trigger `run-all.sh` (or `run-all-universal.sh`) to update Ghostfolio.
+3.  **Save & Import**: Save CSVs to `scripts/input/` and trigger `run-all.sh` to update Ghostfolio.
 
 > [!IMPORTANT]
 > The scripts now operate exclusively within the `scripts/` directory. All input files (`input/`) and generated outputs (`out/`, `.state/`) will be found inside this folder.
-
-> [!TIP]
-> Use **`run-all-universal.sh`** if you are importing CSVs from multiple different brokers (e.g., Revolut + IBKR + DEGIRO). It automatically detects column headers for verification.
 
 After this run, `scripts/.state/prefix1.json` and `scripts/.state/prefix2.json` are created. All future runs will only fetch the last 7 days. Status is tracked in `.state/`.
 
