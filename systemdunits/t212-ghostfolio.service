@@ -1,0 +1,15 @@
+[Unit]
+Description=Trading212 → Ghostfolio daily import
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=YOUR_USER
+WorkingDirectory=/path/to/Export-To-Ghostfolio/scripts
+ExecStart=/path/to/Export-To-Ghostfolio/scripts/venv/bin/python3 t212_fetch.py
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

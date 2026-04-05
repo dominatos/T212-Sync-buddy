@@ -1,0 +1,9 @@
+[Unit]
+Description=Run Trading212 → Ghostfolio import daily
+
+[Timer]
+OnCalendar=*-*-* 08:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
