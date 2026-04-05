@@ -164,5 +164,5 @@ for prefix in "${!accounts[@]}"; do
 done
 
 rmdir temp 2>/dev/null || true
-sudo chown -R $(id -u):$(id -g) out
+#sudo chown -R $(id -u):$(id -g) out
 echo "🎉 Universal Run Complete!"

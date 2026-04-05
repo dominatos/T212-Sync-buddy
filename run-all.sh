@@ -164,5 +164,5 @@ done
 
 rmdir temp 2>/dev/null || true
 # Fixing permissions for the out directory
-sudo chown -R $(id -u):$(id -g) out
+#sudo chown -R $(id -u):$(id -g) out
 echo "🎉 Processing Complete!"
