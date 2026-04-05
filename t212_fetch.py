@@ -208,7 +208,7 @@ def wait_for_export(headers: dict, report_id: int, timeout: int = 600) -> str:
 
 def download_csv(url: str) -> str:
     """Downloads the CSV file from the provided Temporary URL."""
-    print(f"  [DOWNLOAD] {url[:80]}...")
+    print("  [DOWNLOAD] Downloading export file...")
     resp = requests.get(url, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
     return resp.text
@@ -273,8 +273,10 @@ def fetch_account(account: dict):
         start_year = get_earliest_year(headers)
         t_from = datetime(start_year, 1, 1, tzinfo=timezone.utc)
     else:
-        # Fetch only recent activity for updates
-        t_from = now - timedelta(days=LOOKBACK_DAYS)
+        # Resume from persisted checkpoint, with a safety window
+        last_fetch = datetime.fromisoformat(state["last_fetch"])
+        safety_window = now - timedelta(days=LOOKBACK_DAYS)
+        t_from = min(last_fetch, safety_window)
 
     # Build yearly chunks (T212 limit is 1 year per export)
     ranges = []
