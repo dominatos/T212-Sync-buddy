@@ -143,6 +143,9 @@ The scripts use **Prefixes** (like `PREFIX1` or `PREFIX2`) to link your Trading2
 2. Use this name in your `.env` file (e.g., `JOHN_API_KEY=...` and `JOHN_GHOSTFOLIO_ACCOUNT_ID=...`).
 3. The scripts will **automatically** find and process these prefixes.
 
+> [!TIP]
+> **Single account?** If you only have one Ghostfolio account, you can skip prefixes entirely and just set `GHOSTFOLIO_ACCOUNT_ID=...` in your `.env`. The script will automatically use it with the prefix `default`.
+
 ---
 
 ## 6. Copy and Test the Scripts

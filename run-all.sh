@@ -19,6 +19,11 @@ for var in $(compgen -e); do
     fi
 done
 
+# Fallback: support unprefixed GHOSTFOLIO_ACCOUNT_ID for single-account setups
+if [[ ${#accounts[@]} -eq 0 && -n "${GHOSTFOLIO_ACCOUNT_ID:-}" ]]; then
+    accounts["default"]="$GHOSTFOLIO_ACCOUNT_ID"
+fi
+
 if [[ ${#accounts[@]} -eq 0 ]]; then
     echo "❌ No accounts found in .env (expected format: PREFIX_GHOSTFOLIO_ACCOUNT_ID)"
     exit 1
@@ -73,11 +78,16 @@ for prefix in "${!accounts[@]}"; do
       --add-host=host.docker.internal:host-gateway \
       dickwolff/export-to-ghostfolio
     
-    # Allow time for file system sync
-    sleep 20
-    
-    # Locate the generated JSON
-    latest_json=$(ls -t out/ghostfolio-*.json 2>/dev/null | head -1)
+    # Wait for the output JSON file (poll instead of fixed sleep)
+    echo "  ⏳ Waiting for JSON output..."
+    waited=0
+    latest_json=""
+    while [[ $waited -lt 120 ]]; do
+      latest_json=$(ls -t out/ghostfolio-*.json 2>/dev/null | head -1)
+      [[ -n "$latest_json" ]] && break
+      sleep 2
+      waited=$((waited + 2))
+    done
 
     if [[ -z "$latest_json" ]]; then
       echo "  ❌ Conversion failed: No JSON generated for $csv_name"

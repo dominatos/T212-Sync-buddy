@@ -26,7 +26,7 @@ from dotenv import load_dotenv
 # --- CONFIGURATION ---
 load_dotenv()
 
-DEMO          = False
+DEMO          = os.getenv("T212_DEMO", "false").lower() == "true"
 LOOKBACK_DAYS = 7
 STATE_DIR     = ".state"
 INPUT_DIR     = "input"
@@ -64,8 +64,7 @@ def load_accounts() -> list[dict]:
                 seen_prefixes.append(prefix_lower)
 
     if not accounts:
-        print("❌ No accounts found in .env. Expected format: PREFIX_API_KEY / PREFIX_API_SECRET")
-        exit(1)
+        raise SystemExit("❌ No accounts found in .env. Expected format: PREFIX_API_KEY / PREFIX_API_SECRET")
 
     return accounts
 
@@ -108,24 +107,22 @@ def safe_post(url: str, headers: dict, json_body: dict) -> requests.Response:
         return resp
 
 
-def get_earliest_year(headers: dict) -> int:
-    """Iterates through orders list to find the timestamp of the very first trade."""
-    print("  Detecting earliest transaction date...")
-    oldest_date = None
-    next_url = f"{BASE_URL}/equity/history/orders?limit=50"
+def _page_earliest(headers: dict, start_url: str, extract_date) -> datetime | None:
+    """Generic paginator that finds the oldest timestamp across all pages of an endpoint."""
+    oldest = None
+    next_url = start_url
 
     while next_url:
         resp = safe_get(next_url, headers)
         data = resp.json()
         items = data.get("items", [])
-        print(f"  [PAGE] {len(items)} orders")
 
         for item in items:
-            date_str = item.get("order", {}).get("createdAt")
+            date_str = extract_date(item)
             if date_str:
                 dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-                if oldest_date is None or dt < oldest_date:
-                    oldest_date = dt
+                if oldest is None or dt < oldest:
+                    oldest = dt
 
         next_page = data.get("nextPagePath")
         if next_page:
@@ -141,11 +138,36 @@ def get_earliest_year(headers: dict) -> int:
         else:
             next_url = None
 
+    return oldest
+
+
+def get_earliest_year(headers: dict) -> int:
+    """Scans orders, dividends, and transactions to find the earliest activity date."""
+    print("  Detecting earliest activity date...")
+
+    sources = [
+        ("orders",       f"{BASE_URL}/equity/history/orders?limit=50",
+         lambda item: item.get("order", {}).get("createdAt")),
+        ("dividends",    f"{BASE_URL}/equity/history/dividends?limit=50",
+         lambda item: item.get("paidOn")),
+        ("transactions", f"{BASE_URL}/equity/history/transactions?limit=50",
+         lambda item: item.get("dateTime")),
+    ]
+
+    oldest_date = None
+    for label, url, extractor in sources:
+        print(f"  Scanning {label}...")
+        dt = _page_earliest(headers, url, extractor)
+        if dt:
+            print(f"  Earliest {label}: {dt.strftime('%Y-%m-%d')}")
+            if oldest_date is None or dt < oldest_date:
+                oldest_date = dt
+
     if oldest_date:
-        print(f"  Earliest order: {oldest_date.strftime('%Y-%m-%d')}")
+        print(f"  → Overall earliest activity: {oldest_date.strftime('%Y-%m-%d')}")
         return oldest_date.year
     else:
-        print("  No orders found, defaulting to current year")
+        print("  No activity found, defaulting to current year")
         return datetime.now().year
 
 
