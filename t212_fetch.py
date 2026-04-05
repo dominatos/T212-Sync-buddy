@@ -16,6 +16,7 @@ import requests
 import base64
 import time
 import os
+import subprocess
 import json
 import csv
 import io
@@ -319,7 +320,8 @@ def main():
         fetch_account(account)
 
     print("\n✅ All accounts synched. Launching run-all.sh for conversion...")
-    os.system("bash run-all.sh")
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    subprocess.run(["bash", os.path.join(script_dir, "run-all.sh")], check=True)
 
 
 if __name__ == "__main__":
