@@ -21,7 +21,7 @@ sudo apt install docker.io jq gawk python3-full
 ## 1. Project Structure
 
 Your final directory structure should look like this:
-```
+```text
 /path/to/Export-To-Ghostfolio/
 ├── .env.sample           # Template for API credentials for manual runs
 └── scripts/              # logic and automation files

@@ -41,7 +41,7 @@ for prefix in "${!accounts[@]}"; do
   mkdir -p "out/${prefix}"
 
   # Find all CSV files for this prefix in the input directory
-  mapfile -t csv_files < <(ls -1 input/${prefix}*.csv 2>/dev/null | sort)
+  mapfile -t csv_files < <(find input -maxdepth 1 -name "${prefix}*.csv" -type f 2>/dev/null | sort)
 
   if [[ ${#csv_files[@]} -eq 0 ]]; then
     echo "⚠️  No $prefix CSV files found in input/"
@@ -53,20 +53,22 @@ for prefix in "${!accounts[@]}"; do
   for csv_file in "${csv_files[@]}"; do
     csv_name=$(basename "$csv_file")
     csv_base="${csv_name%.*}"
-    csv_base="${csv_base#${prefix}-}"   # strip prefix for cleaner logs
+    csv_base="${csv_base#"${prefix}-"}"   # strip prefix for cleaner logs
 
     echo "  📄 Processing broker file: $csv_name"
 
     # Preparation
-    mkdir -p temp
+    mkdir -p temp out cache
     rm -f out/ghostfolio-*.json
     rm -f temp/*.csv
     cp "$csv_file" "temp/$csv_name"
 
     # Start the Docker-based converter (Auto-detects broker type from CSV contents)
     docker run --rm \
+      --user "$(id -u):$(id -g)" \
       -v "$(pwd)/temp:/var/tmp/e2g-input" \
       -v "$(pwd)/out:/var/tmp/e2g-output" \
+      -v "$(pwd)/cache:/var/tmp/e2g-cache" \
       --env INPUT_FILE="$csv_name" \
       --env GHOSTFOLIO_ACCOUNT_ID="$account_id" \
       --env GHOSTFOLIO_VALIDATE="${GHOSTFOLIO_VALIDATE:-true}" \
@@ -78,36 +80,40 @@ for prefix in "${!accounts[@]}"; do
       --add-host=host.docker.internal:host-gateway \
       dickwolff/export-to-ghostfolio
     
-    # Wait for the output JSON file (poll instead of fixed sleep)
-    echo "  ⏳ Waiting for JSON output..."
-    waited=0
-    latest_json=""
-    while [[ $waited -lt 120 ]]; do
-      latest_json=$(ls -t out/ghostfolio-*.json 2>/dev/null | head -1)
-      [[ -n "$latest_json" ]] && break
-      sleep 2
-      waited=$((waited + 2))
-    done
+    # Collect all produced JSON files
+    mapfile -t produced_json < <(find out -maxdepth 1 -type f -name 'ghostfolio-*.json' 2>/dev/null | sort)
 
-    if [[ -z "$latest_json" ]]; then
+    if [[ ${#produced_json[@]} -eq 0 ]]; then
       echo "  ❌ Conversion failed: No JSON generated for $csv_name"
       rm -f "temp/$csv_name"
       continue
     fi
 
-    # Organize output
-    mv "$latest_json" "out/${prefix}/${prefix}-${csv_base}.json"
+    # Move all output chunks to the account folder
+    json_files=()
+    idx=0
+    for jf in "${produced_json[@]}"; do
+      suffix=""
+      [[ ${#produced_json[@]} -gt 1 ]] && suffix="-$idx"
+      dest="out/${prefix}/${prefix}-${csv_base}${suffix}.json"
+      mv "$jf" "$dest"
+      json_files+=("$dest")
+      ((++idx))
+    done
     rm -f "temp/$csv_name"
 
-    json_file="out/${prefix}/${prefix}-${csv_base}.json"
-    count=$(jq '.activities | length' "$json_file" 2>/dev/null || echo '?')
-    echo "✅ Success: $json_file ($count activities imported)"
+    total_count=0
+    for jf in "${json_files[@]}"; do
+      c=$(jq '.activities | length' "$jf" 2>/dev/null || echo '0')
+      total_count=$((total_count + c))
+    done
+    echo "✅ Success: ${#json_files[@]} JSON file(s) for $csv_name ($total_count activities imported)"
     
     # --- UNIVERSAL VERIFICATION STEP ---
     echo "  🔍 Verifying import against source CSV (Universal Header Check)..."
     
-    # 1. Generate keys from JSON
-    jq -r '.activities[]? | "\(.date[0:10])_\(.symbol | split(".")[0] | split(":")[0])_\(.quantity)"' "$json_file" | sort > temp/json_keys.txt
+    # 1. Generate keys from JSON (merge all chunks)
+    cat "${json_files[@]}" | jq -r '.activities[]? | "\(.date[0:10])_\(.symbol | split(".")[0] | split(":")[0])_\(.quantity)"' | sort > temp/json_keys.txt
 
     # 2. Extract keys from CSV using smart header detection
     gawk -v FPAT='([^,]*)|("[^"]+")' '
@@ -180,5 +186,4 @@ for prefix in "${!accounts[@]}"; do
 done
 
 rmdir temp 2>/dev/null || true
-#sudo chown -R $(id -u):$(id -g) out
 echo "🎉 Universal Run Complete!"

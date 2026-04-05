@@ -30,6 +30,7 @@ DEMO          = os.getenv("T212_DEMO", "false").lower() == "true"
 LOOKBACK_DAYS = 7
 STATE_DIR     = ".state"
 INPUT_DIR     = "input"
+REQUEST_TIMEOUT = (30, 200)  # (connect_timeout, read_timeout)
 
 BASE_HOST = "https://demo.trading212.com" if DEMO else "https://live.trading212.com"
 BASE_URL  = f"{BASE_HOST}/api/v0"
@@ -79,7 +80,7 @@ def safe_get(url: str, headers: dict) -> requests.Response:
     """Wrapper for GET requests that handles 429 Rate Limiting."""
     while True:
         print(f"  [GET] {url}")
-        resp = requests.get(url, headers=headers)
+        resp = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
         print(f"  [RESP] {resp.status_code}")
         if resp.status_code == 429:
             reset_ts = resp.headers.get("x-ratelimit-reset")
@@ -95,7 +96,7 @@ def safe_post(url: str, headers: dict, json_body: dict) -> requests.Response:
     """Wrapper for POST requests that handles 429 Rate Limiting."""
     while True:
         print(f"  [POST] {url}")
-        resp = requests.post(url, headers=headers, json=json_body)
+        resp = requests.post(url, headers=headers, json=json_body, timeout=REQUEST_TIMEOUT)
         print(f"  [RESP] {resp.status_code}")
         if resp.status_code == 429:
             reset_ts = resp.headers.get("x-ratelimit-reset")
@@ -208,7 +209,7 @@ def wait_for_export(headers: dict, report_id: int, timeout: int = 600) -> str:
 def download_csv(url: str) -> str:
     """Downloads the CSV file from the provided Temporary URL."""
     print(f"  [DOWNLOAD] {url[:80]}...")
-    resp = requests.get(url)
+    resp = requests.get(url, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
     return resp.text
 
@@ -302,7 +303,7 @@ def fetch_account(account: dict):
     all_lines = []
     header_written = False
 
-    for report_id, rf, rt in report_ids:
+    for report_id, rf, _ in report_ids:
         csv_text = download_csv(wait_for_export(headers, report_id))
         lines = csv_text.strip().splitlines()
         if not lines:
