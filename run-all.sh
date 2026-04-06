@@ -48,6 +48,8 @@ if [[ "$orphan_found" == true ]]; then
     exit 1
 fi
 
+had_failure=0
+
 # Iterate through discovered accounts/prefixes
 for prefix in "${!accounts[@]}"; do
   account_id="${accounts[$prefix]}"
@@ -198,6 +200,7 @@ for prefix in "${!accounts[@]}"; do
        mkdir -p "input/unverified"
        mv "$csv_file" "input/unverified/"
        echo "  📦 Archived $csv_name → input/unverified/"
+       had_failure=1
        continue
     }
 
@@ -217,6 +220,7 @@ for prefix in "${!accounts[@]}"; do
       mv "$csv_file" "input/quarantine/"
       echo "  🚫 Quarantined $csv_name → input/quarantine/ (verification failed)"
       rm -f temp/json_keys.txt temp/csv_data.txt temp/csv_keys.txt temp/missing_keys.txt temp/verify_error.txt
+      had_failure=1
       continue
     else
       echo "  🎉 Verification Successful: All CSV entries found in output."
@@ -234,4 +238,9 @@ for prefix in "${!accounts[@]}"; do
 done
 
 rmdir temp 2>/dev/null || true
+
+if [[ "$had_failure" -eq 1 ]]; then
+  echo "⚠️  Universal Run Complete with failures (some files quarantined/unverified)."
+  exit 1
+fi
 echo "🎉 Universal Run Complete!"
