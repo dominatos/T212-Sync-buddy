@@ -102,6 +102,18 @@ def safe_parse_reset(header_value: str | None) -> int | None:
         return None
 
 
+def safe_parse_remaining(header_value: str | None, default: int = 1) -> int:
+    """Safely parse x-ratelimit-remaining header to an integer.
+    Returns default on any failure and prints a warning."""
+    if header_value is None:
+        return default
+    try:
+        return int(header_value)
+    except (ValueError, TypeError):
+        print(f"  ⚠️  Malformed x-ratelimit-remaining header: {header_value!r}, defaulting to {default}")
+        return default
+
+
 MAX_429_RETRIES = 10  # Cap retries on 429 to prevent infinite blocking
 
 
@@ -175,7 +187,7 @@ def _page_earliest(headers: dict, start_url: str, extract_date) -> datetime | No
         next_page = data.get("nextPagePath")  # relative path for cursor-based pagination
         if next_page:
             next_url = f"{BASE_HOST}{next_page}"  # reconstruct full URL from relative path
-            remaining = int(resp.headers.get("x-ratelimit-remaining", 1))
+            remaining = safe_parse_remaining(resp.headers.get("x-ratelimit-remaining"))
             if remaining <= 1:  # about to exhaust the rate-limit bucket
                 parsed = safe_parse_reset(resp.headers.get("x-ratelimit-reset"))
                 wait = max(10, parsed - int(time.time()) + 1) if parsed is not None else 10
