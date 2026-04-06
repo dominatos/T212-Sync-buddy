@@ -311,8 +311,9 @@ def save_state(prefix: str, state: dict):
     print(f"  [STATE] saved → {path}")
 
 
-def fetch_account(account: dict) -> bool:
-    """Orchestrates the fetch process for a single Trading212 account. Returns True if a CSV was produced."""
+def fetch_account(account: dict) -> tuple[str, datetime] | None:
+    """Orchestrates the fetch process for a single Trading212 account.
+    Returns (csv_path, cutoff_datetime) if a CSV was produced, or None otherwise."""
     prefix   = account["prefix"]
     headers  = make_headers(account["api_key"], account["api_secret"])
     state    = load_state(prefix)
@@ -340,9 +341,12 @@ def fetch_account(account: dict) -> bool:
     year = t_from.year
     while True:
         range_start = max(t_from, datetime(year, 1, 1, tzinfo=timezone.utc))  # clamp left edge
-        range_end   = min(now, datetime(year, 12, 31, 23, 59, 59, tzinfo=timezone.utc))  # clamp right edge
+        range_end   = min(now, datetime(year, 12, 31, 23, 59, 59, 999999, tzinfo=timezone.utc))  # clamp right edge (inclusive)
         if range_start > now:  # we've gone past the current date — done
             break
+        if range_start > range_end:  # skip invalid chunks (e.g., microsecond-precision t_from near year boundary)
+            year += 1
+            continue
         ranges.append((range_start, range_end))
         year += 1
 
@@ -378,13 +382,13 @@ def fetch_account(account: dict) -> bool:
         print(f"  No new transactions detected for {prefix}. Skipping save.")
         # Don't advance checkpoint here — no CSV was produced, so no handoff to verify.
         # State is advanced after successful run-all.sh handoff in main().
-        return False
+        return None
 
     # Pad short rows so downstream converters don't choke on uneven columns
     all_lines = normalize_csv(all_lines)
 
-    # Write final combined CSV — filename embeds account prefix + date for uniqueness
-    date_str = now.strftime("%Y-%m-%d")
+    # Write final combined CSV — filename embeds account prefix + date + time for per-run uniqueness
+    date_str = now.strftime("%Y-%m-%d-%H%M%S")
     csv_path = os.path.join(INPUT_DIR, f"{prefix}-{date_str}.csv")
     with open(csv_path, "w", encoding="utf-8") as f:
         f.write("\n".join(all_lines))
@@ -393,7 +397,7 @@ def fetch_account(account: dict) -> bool:
     print(f"\n  ✅ Successfully created export: {total_rows} rows → {csv_path}")
     # NOTE: state is NOT persisted here — deferred until after run-all.sh completes
     # so that a failed handoff leaves bootstrap mode intact for retries
-    return True
+    return csv_path, now
 
 
 def main():
@@ -401,44 +405,58 @@ def main():
     print(f"Found {len(accounts)} configured account(s): {[a['prefix'].upper() for a in accounts]}")
 
     # Track which accounts produced CSVs for downstream per-account success checks
-    accounts_with_csvs = []
+    accounts_with_csvs = []  # list of (account, csv_path, cutoff) tuples
+    failed_accounts = []
     for account in accounts:
-        produced = fetch_account(account)
-        if produced:
-            accounts_with_csvs.append(account)
+        try:
+            result = fetch_account(account)
+            if result:
+                csv_path, cutoff = result
+                accounts_with_csvs.append((account, csv_path, cutoff))
+        except Exception as e:
+            failed_accounts.append(account["prefix"])
+            print(f"\n❌ Account {account['prefix'].upper()} failed: {e}")
+            continue
 
-    print("\n✅ All accounts synched. Launching run-all.sh for conversion...")
+    if failed_accounts:
+        print(f"\n⚠️  Failed accounts: {[p.upper() for p in failed_accounts]}")
+
+    if not accounts_with_csvs:
+        if failed_accounts:
+            raise SystemExit(f"❌ All accounts failed: {[p.upper() for p in failed_accounts]}")
+        print("\n✅ No CSVs produced. Nothing to convert.")
+        return
+
+    print(f"\n✅ {len(accounts_with_csvs)} account(s) synced. Launching run-all.sh for conversion...")
     script_path = REPO_ROOT / "scripts" / "run-all.sh"
     if not script_path.exists():
         script_path = REPO_ROOT / "run-all.sh"
 
     # Execute run-all.sh with REPO_ROOT as cwd to ensure it finds the correct directories.
     # Do NOT use check=True — we inspect per-account results even on partial failure.
-    result = subprocess.run(["bash", str(script_path)], cwd=str(REPO_ROOT))
+    run_result = subprocess.run(["bash", str(script_path)], cwd=str(REPO_ROOT))
 
     # Determine per-account success AFTER run-all.sh completes (never mid-pipeline).
-    # An account succeeded only if none of its CSVs remain in input/, quarantine/, or unverified/
-    # (meaning all were verified and archived to input/done/).
-    now = datetime.now(timezone.utc)
+    # An account succeeded only if its specific CSV is not in input/, quarantine/, or unverified/
+    # (meaning it was verified and archived to input/done/).
     input_path = Path(INPUT_DIR)
     quarantine_dir = input_path / "quarantine"
     unverified_dir = input_path / "unverified"
     persisted_count = 0
 
-    for account in accounts_with_csvs:
+    for account, csv_path, cutoff in accounts_with_csvs:
         prefix = account["prefix"]
-        # Check all locations where a CSV could be if it did NOT succeed
-        remaining = list(input_path.glob(f"{prefix}-*.csv"))
-        quarantined = list(quarantine_dir.glob(f"{prefix}-*.csv")) if quarantine_dir.exists() else []
-        unverified = list(unverified_dir.glob(f"{prefix}-*.csv")) if unverified_dir.exists() else []
-        failed = remaining + quarantined + unverified
+        csv_name = os.path.basename(csv_path)
+        # Check if this specific CSV ended up in a failure location
+        remaining = (input_path / csv_name).exists()
+        quarantined = (quarantine_dir / csv_name).exists() if quarantine_dir.exists() else False
+        unverified = (unverified_dir / csv_name).exists() if unverified_dir.exists() else False
 
-        if failed:
-            failed_files = [f.name for f in failed]
+        if remaining or quarantined or unverified:
             print(f"  ⚠️  Skipping state update for {prefix.upper()}: "
-                  f"failed CSVs: {', '.join(failed_files)}")
+                  f"CSV not archived to done/: {csv_name}")
         else:
-            save_state(prefix, {"last_fetch": now.isoformat()})
+            save_state(prefix, {"last_fetch": cutoff.isoformat()})
             persisted_count += 1
 
     if persisted_count > 0:
@@ -448,8 +466,12 @@ def main():
         print(f"⚠️  State NOT persisted for {failed_count} account(s) due to failures.")
 
     # Propagate run-all.sh failure to the caller (systemd, cron, etc.)
-    if result.returncode != 0:
-        raise SystemExit(f"run-all.sh exited with code {result.returncode}")
+    if run_result.returncode != 0:
+        raise SystemExit(f"run-all.sh exited with code {run_result.returncode}")
+
+    # Propagate fetch failures to the caller even if run-all.sh succeeded
+    if failed_accounts:
+        raise SystemExit(f"⚠️  Some accounts failed during fetch: {[p.upper() for p in failed_accounts]}")
 
 
 if __name__ == "__main__":
