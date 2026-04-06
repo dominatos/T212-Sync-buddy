@@ -305,6 +305,8 @@ def save_state(prefix: str, state: dict):
     tmp_path = os.path.join(STATE_DIR, f"{prefix}.json.tmp")
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
     os.replace(tmp_path, path)
     print(f"  [STATE] saved → {path}")
 
