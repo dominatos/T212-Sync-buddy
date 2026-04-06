@@ -46,10 +46,11 @@ os.makedirs(INPUT_DIR, exist_ok=True)
 def load_accounts() -> list[dict]:
     """
     Parses .env to find account credential pairs.
-    Expected format: PREFIX_API_KEY and PREFIX_API_SECRET
+    Expected format: PREFIX_API_KEY, PREFIX_API_SECRET, and PREFIX_GHOSTFOLIO_ACCOUNT_ID
     """
     accounts = []
     seen_prefixes = []  # Guard against duplicate env-var casing (e.g. ISA vs isa)
+    missing_gf_ids = []  # Collect prefixes missing their Ghostfolio account ID
 
     for key in os.environ:
         if key.endswith("_API_KEY"):
@@ -60,15 +61,25 @@ def load_accounts() -> list[dict]:
             if prefix_lower in seen_prefixes:        # skip case-insensitive duplicates
                 continue
             if os.getenv(secret_key):                # only add if both key+secret exist
+                gf_account_id = os.getenv(f"{prefix}_GHOSTFOLIO_ACCOUNT_ID")
+                if not gf_account_id:
+                    missing_gf_ids.append(prefix)
+                    seen_prefixes.append(prefix_lower)
+                    continue
                 accounts.append({
                     "prefix": prefix_lower,
                     "api_key": os.getenv(key),
                     "api_secret": os.getenv(secret_key),
+                    "ghostfolio_account_id": gf_account_id,
                 })
                 seen_prefixes.append(prefix_lower)
 
+    if missing_gf_ids:
+        missing = ", ".join(f"{p}_GHOSTFOLIO_ACCOUNT_ID" for p in missing_gf_ids)
+        raise SystemExit(f"❌ Missing Ghostfolio account IDs in .env: {missing}")
+
     if not accounts:
-        raise SystemExit("❌ No accounts found in .env. Expected format: PREFIX_API_KEY / PREFIX_API_SECRET")
+        raise SystemExit("❌ No accounts found in .env. Expected format: PREFIX_API_KEY / PREFIX_API_SECRET / PREFIX_GHOSTFOLIO_ACCOUNT_ID")
 
     return accounts
 
@@ -361,7 +372,8 @@ def fetch_account(account: dict):
 
     if len(all_lines) <= 1:  # header-only means zero transactions
         print(f"  No new transactions detected for {prefix}. Skipping save.")
-        save_state(prefix, {"last_fetch": now.isoformat()})  # still advance checkpoint
+        # Don't advance checkpoint here — no CSV was produced, so no handoff to verify.
+        # State is advanced after successful run-all.sh handoff in main().
         return
 
     # Pad short rows so downstream converters don't choke on uneven columns
@@ -375,8 +387,8 @@ def fetch_account(account: dict):
 
     total_rows = len(all_lines) - 1  # subtract header
     print(f"\n  ✅ Successfully created export: {total_rows} rows → {csv_path}")
-
-    save_state(prefix, {"last_fetch": now.isoformat()})  # persist checkpoint for next run
+    # NOTE: state is NOT persisted here — deferred until after run-all.sh succeeds
+    # so that a failed handoff leaves bootstrap mode intact for retries
 
 
 def main():
@@ -390,9 +402,17 @@ def main():
     script_path = REPO_ROOT / "scripts" / "run-all.sh"
     if not script_path.exists():
         script_path = REPO_ROOT / "run-all.sh"
-        
-    # Execute run-all.sh with REPO_ROOT as cwd to ensure it finds the correct directories
+
+    # Execute run-all.sh with REPO_ROOT as cwd to ensure it finds the correct directories.
+    # check=True means CalledProcessError is raised on failure, leaving state unadvanced.
     subprocess.run(["bash", str(script_path)], cwd=str(REPO_ROOT), check=True)
+
+    # Only persist state AFTER run-all.sh succeeds — if it fails, state stays unchanged
+    # so retries will re-fetch in the same mode (bootstrap or incremental)
+    now = datetime.now(timezone.utc)
+    for account in accounts:
+        save_state(account["prefix"], {"last_fetch": now.isoformat()})
+    print("✅ State persisted for all accounts.")
 
 
 if __name__ == "__main__":

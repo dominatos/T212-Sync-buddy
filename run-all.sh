@@ -31,11 +31,11 @@ fi
 
 # Validate that every CSV prefix in input/ has a matching account
 orphan_found=false
-for csv_file in input/*[-_]*.csv; do
+for csv_file in input/*-*.csv; do
     [[ -f "$csv_file" ]] || continue
     fname=$(basename "$csv_file")
-    # Extract prefix: everything before the first '-' or '_'
-    csv_prefix="${fname%%[-_]*}"
+    # Extract prefix: everything before the first '-' (hyphen-only contract)
+    csv_prefix="${fname%%-*}"
     csv_prefix=$(echo "$csv_prefix" | tr '[:upper:]' '[:lower:]')
     if [[ -z "${accounts[$csv_prefix]+_}" ]]; then
         echo "❌ Orphan CSV prefix '$csv_prefix' (from $fname) has no matching account in .env"
@@ -60,7 +60,7 @@ for prefix in "${!accounts[@]}"; do
   mkdir -p "out/${prefix}"
 
   # Find all CSV files for this prefix in the input directory
-  mapfile -t csv_files < <(find input -maxdepth 1 -name "${prefix}*.csv" -type f 2>/dev/null | sort)
+  mapfile -t csv_files < <(find input -maxdepth 1 -name "${prefix}-*.csv" -type f 2>/dev/null | sort)
 
   if [[ ${#csv_files[@]} -eq 0 ]]; then
     echo "⚠️  No $prefix CSV files found in input/"
@@ -182,6 +182,10 @@ for prefix in "${!accounts[@]}"; do
       ticker = val_s; sub(/\..*/, "", ticker); sub(/:.*/, "", ticker)
       qty = val_q
       
+      # Skip non-trade rows (deposits, withdrawals, interest, etc.) — no ticker means
+      # Ghostfolio converter intentionally ignores them, so they are not discrepancies
+      if (ticker == "") next
+      
       if (date ~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}/) {
         if (qty ~ /\./) { sub(/0+$/, "", qty); sub(/\.$/, "", qty); }
         if (qty == "" || qty == "0") qty = "0"
@@ -208,6 +212,12 @@ for prefix in "${!accounts[@]}"; do
       echo "  -------------------------------------------------------"
       join -t $'\t' -1 1 -2 1 temp/missing_keys.txt temp/csv_data.txt | cut -f2-
       echo "  -------------------------------------------------------"
+      # Quarantine mismatched CSV — do NOT mark as done
+      mkdir -p "input/quarantine"
+      mv "$csv_file" "input/quarantine/"
+      echo "  🚫 Quarantined $csv_name → input/quarantine/ (verification failed)"
+      rm -f temp/json_keys.txt temp/csv_data.txt temp/csv_keys.txt temp/missing_keys.txt temp/verify_error.txt
+      continue
     else
       echo "  🎉 Verification Successful: All CSV entries found in output."
     fi
