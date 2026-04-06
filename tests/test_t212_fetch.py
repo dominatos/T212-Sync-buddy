@@ -743,9 +743,10 @@ class TestMain(unittest.TestCase):
             t212_fetch.main()
 
     @patch("t212_fetch.save_state")
+    @patch("t212_fetch.subprocess.run")
     @patch("t212_fetch.fetch_account")
     @patch("t212_fetch.load_accounts")
-    def test_no_csvs_produced_saves_state(self, mock_load_acc, mock_fetch, mock_save):
+    def test_no_csvs_produced_saves_state(self, mock_load_acc, mock_fetch, mock_run, mock_save):
         """No-op (no new transactions) should persist state immediately."""
         mock_load_acc.return_value = [
             {"prefix": "isa", "api_key": "k", "api_secret": "s"}
@@ -753,6 +754,7 @@ class TestMain(unittest.TestCase):
         mock_fetch.return_value = (None, datetime.now(timezone.utc))
         t212_fetch.main()
         mock_save.assert_called_once()
+        mock_run.assert_not_called()
 
     @patch("t212_fetch.save_state")
     @patch("t212_fetch.subprocess.run")
