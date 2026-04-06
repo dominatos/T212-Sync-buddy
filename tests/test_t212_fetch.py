@@ -16,6 +16,7 @@ import csv
 import tempfile
 import base64
 import time
+import requests.exceptions
 from datetime import datetime, timezone, timedelta
 
 # Add parent directory to path so we can import t212_fetch
@@ -349,9 +350,9 @@ class TestSafeGet(unittest.TestCase):
     def test_500_raises_http_error(self, mock_get):
         mock_resp = MagicMock()
         mock_resp.status_code = 500
-        mock_resp.raise_for_status.side_effect = Exception("Server Error")
+        mock_resp.raise_for_status.side_effect = requests.exceptions.HTTPError("Server Error")
         mock_get.return_value = mock_resp
-        with self.assertRaises(Exception, msg="Server Error"):
+        with self.assertRaises(requests.exceptions.HTTPError):
             t212_fetch.safe_get("http://test.com", {})
 
 
@@ -599,9 +600,9 @@ class TestDownloadCsv(unittest.TestCase):
     @patch("t212_fetch.requests.get")
     def test_http_error_raises(self, mock_get):
         mock_resp = MagicMock()
-        mock_resp.raise_for_status.side_effect = Exception("404")
+        mock_resp.raise_for_status.side_effect = requests.exceptions.HTTPError("404")
         mock_get.return_value = mock_resp
-        with self.assertRaises(Exception):
+        with self.assertRaises(requests.exceptions.HTTPError):
             t212_fetch.download_csv("http://example.com/missing.csv")
 
 
@@ -710,12 +711,18 @@ class TestFetchAccount(unittest.TestCase):
         self, mock_datetime, mock_load, mock_earliest, mock_req_exp, mock_wait, mock_dl, mock_sleep
     ):
         """CSV filename follows prefix-YYYY-MM-DD-HHMMSS.csv contract with deterministic time."""
-        # Freeze time for deterministic test by patching the class
+        # NOTE: We patch t212_fetch.datetime to freeze time deterministically.
+        # - mock_datetime.now() returns our frozen timestamp (used by fetch_account
+        #   for `now = datetime.now(timezone.utc)` and date_str formatting).
+        # - mock_datetime.side_effect delegates datetime(year, month, day, ...)
+        #   constructor calls back to the real class (used for range construction
+        #   like `datetime(start_year, 1, 1, tzinfo=timezone.utc)`).
+        # - mock_datetime.fromisoformat delegates to the real class (used by
+        #   incremental mode, not exercised here but must not break).
+        # This coupling is fragile but avoids adding freezegun as a dependency.
+        # If freezegun is added to the project, replace this with @freeze_time.
         frozen_time = datetime(2027, 8, 15, 14, 30, 45, tzinfo=timezone.utc)
-        
-        # When t212_fetch calls datetime(year, month, day), act like the real class
         mock_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
-        # When it calls datetime.now(), return our frozen time
         mock_datetime.now.return_value = frozen_time
 
         mock_load.return_value = {}
