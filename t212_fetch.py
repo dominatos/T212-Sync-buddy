@@ -311,9 +311,10 @@ def save_state(prefix: str, state: dict):
     print(f"  [STATE] saved → {path}")
 
 
-def fetch_account(account: dict) -> tuple[str, datetime] | None:
+def fetch_account(account: dict) -> tuple[str | None, datetime]:
     """Orchestrates the fetch process for a single Trading212 account.
-    Returns (csv_path, cutoff_datetime) if a CSV was produced, or None otherwise."""
+    Returns (csv_path, cutoff_datetime) where csv_path is None if no new
+    transactions were found (no-op success)."""
     prefix   = account["prefix"]
     headers  = make_headers(account["api_key"], account["api_secret"])
     state    = load_state(prefix)
@@ -379,10 +380,10 @@ def fetch_account(account: dict) -> tuple[str, datetime] | None:
         print(f"  [{rf.year}] Fetched {len(lines)-1} rows.")
 
     if len(all_lines) <= 1:  # header-only means zero transactions
-        print(f"  No new transactions detected for {prefix}. Skipping save.")
-        # Don't advance checkpoint here — no CSV was produced, so no handoff to verify.
-        # State is advanced after successful run-all.sh handoff in main().
-        return None
+        print(f"  No new transactions detected for {prefix}. Skipping CSV save.")
+        # No CSV produced — return None csv_path but still propagate cutoff
+        # so the caller can advance state without needing a verification handoff.
+        return None, now
 
     # Pad short rows so downstream converters don't choke on uneven columns
     all_lines = normalize_csv(all_lines)
@@ -409,10 +410,13 @@ def main():
     failed_accounts = []
     for account in accounts:
         try:
-            result = fetch_account(account)
-            if result:
-                csv_path, cutoff = result
+            csv_path, cutoff = fetch_account(account)
+            if csv_path is not None:
                 accounts_with_csvs.append((account, csv_path, cutoff))
+            else:
+                # No-op (no new transactions): persist state immediately since
+                # there is no CSV to verify through run-all.sh.
+                save_state(account["prefix"], {"last_fetch": cutoff.isoformat()})
         except Exception as e:
             failed_accounts.append(account["prefix"])
             print(f"\n❌ Account {account['prefix'].upper()} failed: {e}")
