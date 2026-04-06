@@ -347,6 +347,8 @@ def fetch_account(account: dict) -> tuple[str | None, datetime]:
         # Incremental run: resume from checkpoint, but always overlap by LOOKBACK_DAYS
         # to catch late-arriving settlements or corrections
         last_fetch = datetime.fromisoformat(state["last_fetch"])
+        if last_fetch.tzinfo is None:
+            last_fetch = last_fetch.replace(tzinfo=timezone.utc)
         safety_window = now - timedelta(days=LOOKBACK_DAYS)
         t_from = min(last_fetch, safety_window)  # whichever is earlier wins
 
