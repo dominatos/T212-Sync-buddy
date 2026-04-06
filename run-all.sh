@@ -195,9 +195,9 @@ for prefix in "${!accounts[@]}"; do
     }' "$csv_file" 2>temp/verify_error.txt | sort -k1,1 > temp/csv_data.txt || {
        cat temp/verify_error.txt
        echo "  🚫 Verification skipped for this file."
-       mkdir -p "input/done"
-       mv "$csv_file" "input/done/"
-       echo "  📦 Archived $csv_name → input/done/"
+       mkdir -p "input/unverified"
+       mv "$csv_file" "input/unverified/"
+       echo "  📦 Archived $csv_name → input/unverified/"
        continue
     }
 

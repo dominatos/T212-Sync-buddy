@@ -70,6 +70,8 @@ def load_accounts() -> list[dict]:
                     "prefix": prefix_lower,
                     "api_key": os.getenv(key),
                     "api_secret": os.getenv(secret_key),
+                    # Validated above but not used by fetch logic — run-all.sh reads it
+                    # independently from .env. Kept here to confirm full account config.
                     "ghostfolio_account_id": gf_account_id,
                 })
                 seen_prefixes.append(prefix_lower)
