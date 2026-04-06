@@ -46,17 +46,17 @@ def load_accounts() -> list[dict]:
     Expected format: PREFIX_API_KEY and PREFIX_API_SECRET
     """
     accounts = []
-    seen_prefixes = []
+    seen_prefixes = []  # Guard against duplicate env-var casing (e.g. ISA vs isa)
 
     for key in os.environ:
         if key.endswith("_API_KEY"):
-            prefix = key[: -len("_API_KEY")]
-            secret_key = f"{prefix}_API_SECRET"
+            prefix = key[: -len("_API_KEY")]       # strip suffix → "ISA", "CFD", etc.
+            secret_key = f"{prefix}_API_SECRET"     # derive the companion secret var
             prefix_lower = prefix.lower()
 
-            if prefix_lower in seen_prefixes:
+            if prefix_lower in seen_prefixes:        # skip case-insensitive duplicates
                 continue
-            if os.getenv(secret_key):
+            if os.getenv(secret_key):                # only add if both key+secret exist
                 accounts.append({
                     "prefix": prefix_lower,
                     "api_key": os.getenv(key),
@@ -72,8 +72,18 @@ def load_accounts() -> list[dict]:
 
 def make_headers(api_key: str, api_secret: str) -> dict:
     """Creates Basic Auth headers for the API requests."""
-    creds = base64.b64encode(f"{api_key}:{api_secret}".encode()).decode()
+    creds = base64.b64encode(f"{api_key}:{api_secret}".encode()).decode()  # RFC 7617 Basic auth
     return {"Authorization": f"Basic {creds}"}
+
+
+def _parse_reset_timestamp(header_value: str | None) -> int | None:
+    """Safely parse x-ratelimit-reset header to an epoch timestamp. Returns None on any failure."""
+    if header_value is None:
+        return None
+    try:
+        return int(header_value)
+    except (ValueError, TypeError):
+        return None
 
 
 def safe_get(url: str, headers: dict) -> requests.Response:
@@ -83,11 +93,12 @@ def safe_get(url: str, headers: dict) -> requests.Response:
         resp = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
         print(f"  [RESP] {resp.status_code}")
         if resp.status_code == 429:
-            reset_ts = resp.headers.get("x-ratelimit-reset")
-            wait = max(10, int(reset_ts) - int(time.time()) + 1) if reset_ts else 60
+            parsed_reset = _parse_reset_timestamp(resp.headers.get("x-ratelimit-reset"))
+            # Wait until the reset window, minimum 10s to avoid tight loops; 60s fallback if missing/malformed
+            wait = max(10, parsed_reset - int(time.time()) + 1) if parsed_reset is not None else 60
             print(f"  [RATE LIMIT] waiting {wait}s...")
             time.sleep(wait)
-            continue
+            continue  # retry the exact same request
         resp.raise_for_status()
         return resp
 
@@ -99,11 +110,11 @@ def safe_post(url: str, headers: dict, json_body: dict) -> requests.Response:
         resp = requests.post(url, headers=headers, json=json_body, timeout=REQUEST_TIMEOUT)
         print(f"  [RESP] {resp.status_code}")
         if resp.status_code == 429:
-            reset_ts = resp.headers.get("x-ratelimit-reset")
-            wait = max(10, int(reset_ts) - int(time.time()) + 1) if reset_ts else 60
+            parsed_reset = _parse_reset_timestamp(resp.headers.get("x-ratelimit-reset"))
+            wait = max(10, parsed_reset - int(time.time()) + 1) if parsed_reset is not None else 60
             print(f"  [RATE LIMIT] waiting {wait}s...")
             time.sleep(wait)
-            continue
+            continue  # retry the exact same request
         resp.raise_for_status()
         return resp
 
@@ -119,25 +130,25 @@ def _page_earliest(headers: dict, start_url: str, extract_date) -> datetime | No
         items = data.get("items", [])
 
         for item in items:
-            date_str = extract_date(item)
+            date_str = extract_date(item)  # caller-supplied lambda pulls the right field
             if date_str:
-                dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+                dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))  # normalise UTC suffix
                 if oldest is None or dt < oldest:
-                    oldest = dt
+                    oldest = dt  # track the global minimum across all pages
 
-        next_page = data.get("nextPagePath")
+        next_page = data.get("nextPagePath")  # relative path for cursor-based pagination
         if next_page:
-            next_url = f"{BASE_HOST}{next_page}"
+            next_url = f"{BASE_HOST}{next_page}"  # reconstruct full URL from relative path
             remaining = int(resp.headers.get("x-ratelimit-remaining", 1))
-            if remaining <= 1:
-                reset_ts = resp.headers.get("x-ratelimit-reset")
-                wait = max(10, int(reset_ts) - int(time.time()) + 1) if reset_ts else 10
+            if remaining <= 1:  # about to exhaust the rate-limit bucket
+                parsed_reset = _parse_reset_timestamp(resp.headers.get("x-ratelimit-reset"))
+                wait = max(10, parsed_reset - int(time.time()) + 1) if parsed_reset is not None else 10
                 print(f"  [RATE LIMIT] {remaining} remaining, waiting {wait}s...")
                 time.sleep(wait)
             else:
-                time.sleep(1)
+                time.sleep(1)  # courtesy delay between pages
         else:
-            next_url = None
+            next_url = None  # no more pages — stop iteration
 
     return oldest
 
@@ -202,7 +213,7 @@ def wait_for_export(headers: dict, report_id: int, timeout: int = 600) -> str:
                     print(" ready!")
                     return exp["downloadLink"]
         print(".", end="", flush=True)
-        time.sleep(61)  # Exports status endpoint is limited to 1 request per minute
+        time.sleep(61)  # T212 exports-status endpoint is hard-capped at 1 req/min
     raise TimeoutError(f"Report {report_id} not ready after {timeout}s")
 
 
@@ -222,18 +233,18 @@ def normalize_csv(lines: list[str]) -> list[str]:
     if not lines:
         return lines
 
-    header = next(csv.reader([lines[0]]))
+    header = next(csv.reader([lines[0]]))  # parse header to get the column blueprint
     expected_cols = len(header)
 
-    result = [lines[0]]
+    result = [lines[0]]  # keep header as-is
     for line in lines[1:]:
-        if not line.strip():
+        if not line.strip():  # skip blank lines (T212 sometimes emits trailing newlines)
             continue
         row = next(csv.reader([line]))
         if len(row) < expected_cols:
-            row += [""] * (expected_cols - len(row))
+            row += [""] * (expected_cols - len(row))  # pad short rows with empty fields
         buf = io.StringIO()
-        csv.writer(buf).writerow(row)
+        csv.writer(buf).writerow(row)  # re-serialize to ensure consistent quoting
         result.append(buf.getvalue().rstrip("\r\n"))
 
     return result
@@ -269,29 +280,31 @@ def fetch_account(account: dict):
     print(f"{'='*50}")
 
     if is_first:
-        # Determine full range for initial setup
+        # First run: scan all endpoints to find the oldest transaction year
         start_year = get_earliest_year(headers)
         t_from = datetime(start_year, 1, 1, tzinfo=timezone.utc)
     else:
-        # Resume from persisted checkpoint, with a safety window
+        # Incremental run: resume from checkpoint, but always overlap by LOOKBACK_DAYS
+        # to catch late-arriving settlements or corrections
         last_fetch = datetime.fromisoformat(state["last_fetch"])
         safety_window = now - timedelta(days=LOOKBACK_DAYS)
-        t_from = min(last_fetch, safety_window)
+        t_from = min(last_fetch, safety_window)  # whichever is earlier wins
 
-    # Build yearly chunks (T212 limit is 1 year per export)
+    # T212 API enforces a max span of 1 calendar year per export request,
+    # so we partition the total range into per-year chunks
     ranges = []
     year = t_from.year
     while True:
-        range_start = max(t_from, datetime(year, 1, 1, tzinfo=timezone.utc))
-        range_end   = min(now, datetime(year, 12, 31, 23, 59, 59, tzinfo=timezone.utc))
-        if range_start > now:
+        range_start = max(t_from, datetime(year, 1, 1, tzinfo=timezone.utc))  # clamp left edge
+        range_end   = min(now, datetime(year, 12, 31, 23, 59, 59, tzinfo=timezone.utc))  # clamp right edge
+        if range_start > now:  # we've gone past the current date — done
             break
         ranges.append((range_start, range_end))
         year += 1
 
     print(f"\n  Processing {len(ranges)} timeframe range(s)...")
 
-    # Queue all export requests
+    # Fire all export requests up front; T212 generates them server-side in the background
     report_ids = []
     for i, (rf, rt) in enumerate(ranges):
         print(f"\n  Requesting range: {rf.strftime('%Y-%m-%d')} → {rt.strftime('%Y-%m-%d')}...")
@@ -299,9 +312,9 @@ def fetch_account(account: dict):
         report_ids.append((report_id, rf, rt))
         if i < len(ranges) - 1:
             print("  Waiting 31s (rate limit)...")
-            time.sleep(31)
+            time.sleep(31)  # export-creation endpoint: max 1 req / 30s
 
-    # Resolve exports and merge data
+    # Download each completed export and merge into a single CSV (one header line)
     all_lines = []
     header_written = False
 
@@ -312,29 +325,29 @@ def fetch_account(account: dict):
             print(f"  [{rf.year}] No data found for this year, skipping.")
             continue
         if not header_written:
-            all_lines.append(lines[0])
+            all_lines.append(lines[0])  # keep header from the first non-empty chunk only
             header_written = True
-        all_lines.extend(lines[1:])
+        all_lines.extend(lines[1:])  # append data rows, skip duplicate headers
         print(f"  [{rf.year}] Fetched {len(lines)-1} rows.")
 
-    if len(all_lines) <= 1:
+    if len(all_lines) <= 1:  # header-only means zero transactions
         print(f"  No new transactions detected for {prefix}. Skipping save.")
-        save_state(prefix, {"last_fetch": now.isoformat()})
+        save_state(prefix, {"last_fetch": now.isoformat()})  # still advance checkpoint
         return
 
-    # Ensure all rows have consistent column counts
+    # Pad short rows so downstream converters don't choke on uneven columns
     all_lines = normalize_csv(all_lines)
 
-    # Write final combined CSV
+    # Write final combined CSV — filename embeds account prefix + date for uniqueness
     date_str = now.strftime("%Y-%m-%d")
     csv_path = os.path.join(INPUT_DIR, f"{prefix}-{date_str}.csv")
     with open(csv_path, "w", encoding="utf-8") as f:
         f.write("\n".join(all_lines))
 
-    total_rows = len(all_lines) - 1
+    total_rows = len(all_lines) - 1  # subtract header
     print(f"\n  ✅ Successfully created export: {total_rows} rows → {csv_path}")
 
-    save_state(prefix, {"last_fetch": now.isoformat()})
+    save_state(prefix, {"last_fetch": now.isoformat()})  # persist checkpoint for next run
 
 
 def main():
@@ -345,8 +358,8 @@ def main():
         fetch_account(account)
 
     print("\n✅ All accounts synched. Launching run-all.sh for conversion...")
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    subprocess.run(["bash", os.path.join(script_dir, "run-all.sh")], check=True)
+    script_dir = os.path.dirname(os.path.abspath(__file__))  # resolve relative to this script
+    subprocess.run(["bash", os.path.join(script_dir, "run-all.sh")], check=True)  # hand off to converter pipeline
 
 
 if __name__ == "__main__":
