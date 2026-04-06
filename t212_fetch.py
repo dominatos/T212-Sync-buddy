@@ -309,8 +309,8 @@ def save_state(prefix: str, state: dict):
     print(f"  [STATE] saved → {path}")
 
 
-def fetch_account(account: dict):
-    """Orchestrates the fetch process for a single Trading212 account."""
+def fetch_account(account: dict) -> bool:
+    """Orchestrates the fetch process for a single Trading212 account. Returns True if a CSV was produced."""
     prefix   = account["prefix"]
     headers  = make_headers(account["api_key"], account["api_secret"])
     state    = load_state(prefix)
@@ -376,7 +376,7 @@ def fetch_account(account: dict):
         print(f"  No new transactions detected for {prefix}. Skipping save.")
         # Don't advance checkpoint here — no CSV was produced, so no handoff to verify.
         # State is advanced after successful run-all.sh handoff in main().
-        return
+        return False
 
     # Pad short rows so downstream converters don't choke on uneven columns
     all_lines = normalize_csv(all_lines)
@@ -389,16 +389,21 @@ def fetch_account(account: dict):
 
     total_rows = len(all_lines) - 1  # subtract header
     print(f"\n  ✅ Successfully created export: {total_rows} rows → {csv_path}")
-    # NOTE: state is NOT persisted here — deferred until after run-all.sh succeeds
+    # NOTE: state is NOT persisted here — deferred until after run-all.sh completes
     # so that a failed handoff leaves bootstrap mode intact for retries
+    return True
 
 
 def main():
     accounts = load_accounts()
     print(f"Found {len(accounts)} configured account(s): {[a['prefix'].upper() for a in accounts]}")
 
+    # Track which accounts produced CSVs for downstream per-account success checks
+    accounts_with_csvs = []
     for account in accounts:
-        fetch_account(account)
+        produced = fetch_account(account)
+        if produced:
+            accounts_with_csvs.append(account)
 
     print("\n✅ All accounts synched. Launching run-all.sh for conversion...")
     script_path = REPO_ROOT / "scripts" / "run-all.sh"
@@ -406,15 +411,43 @@ def main():
         script_path = REPO_ROOT / "run-all.sh"
 
     # Execute run-all.sh with REPO_ROOT as cwd to ensure it finds the correct directories.
-    # check=True means CalledProcessError is raised on failure, leaving state unadvanced.
-    subprocess.run(["bash", str(script_path)], cwd=str(REPO_ROOT), check=True)
+    # Do NOT use check=True — we inspect per-account results even on partial failure.
+    result = subprocess.run(["bash", str(script_path)], cwd=str(REPO_ROOT))
 
-    # Only persist state AFTER run-all.sh succeeds — if it fails, state stays unchanged
-    # so retries will re-fetch in the same mode (bootstrap or incremental)
+    # Determine per-account success AFTER run-all.sh completes (never mid-pipeline).
+    # An account succeeded only if none of its CSVs remain in input/, quarantine/, or unverified/
+    # (meaning all were verified and archived to input/done/).
     now = datetime.now(timezone.utc)
-    for account in accounts:
-        save_state(account["prefix"], {"last_fetch": now.isoformat()})
-    print("✅ State persisted for all accounts.")
+    input_path = Path(INPUT_DIR)
+    quarantine_dir = input_path / "quarantine"
+    unverified_dir = input_path / "unverified"
+    persisted_count = 0
+
+    for account in accounts_with_csvs:
+        prefix = account["prefix"]
+        # Check all locations where a CSV could be if it did NOT succeed
+        remaining = list(input_path.glob(f"{prefix}-*.csv"))
+        quarantined = list(quarantine_dir.glob(f"{prefix}-*.csv")) if quarantine_dir.exists() else []
+        unverified = list(unverified_dir.glob(f"{prefix}-*.csv")) if unverified_dir.exists() else []
+        failed = remaining + quarantined + unverified
+
+        if failed:
+            failed_files = [f.name for f in failed]
+            print(f"  ⚠️  Skipping state update for {prefix.upper()}: "
+                  f"failed CSVs: {', '.join(failed_files)}")
+        else:
+            save_state(prefix, {"last_fetch": now.isoformat()})
+            persisted_count += 1
+
+    if persisted_count > 0:
+        print(f"✅ State persisted for {persisted_count} account(s).")
+    if persisted_count < len(accounts_with_csvs):
+        failed_count = len(accounts_with_csvs) - persisted_count
+        print(f"⚠️  State NOT persisted for {failed_count} account(s) due to failures.")
+
+    # Propagate run-all.sh failure to the caller (systemd, cron, etc.)
+    if result.returncode != 0:
+        raise SystemExit(f"run-all.sh exited with code {result.returncode}")
 
 
 if __name__ == "__main__":
