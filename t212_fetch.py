@@ -228,7 +228,7 @@ def get_earliest_year(headers: dict) -> int:
         return oldest_date.year
     else:
         print("  No activity found, defaulting to current year")
-        return datetime.now().year
+        return datetime.now(timezone.utc).year
 
 
 def request_export(headers: dict, time_from: datetime, time_to: datetime) -> int:

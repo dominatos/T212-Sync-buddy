@@ -107,6 +107,7 @@ for prefix in "${!accounts[@]}"; do
     if [[ ${#produced_json[@]} -eq 0 ]]; then
       echo "  ❌ Conversion failed: No JSON generated for $csv_name"
       rm -f "temp/$csv_name"
+      had_failure=1
       continue
     fi
 
