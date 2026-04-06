@@ -125,16 +125,32 @@ for prefix in "${!accounts[@]}"; do
         # Smart Date Search
         if (!t_idx && (col ~ /time|date|timestamp/)) t_idx = i
         
-        # Smart Symbol Search
-        if (!sym_idx && (col ~ /ticker|symbol|isin|asset|instrument|contract/)) sym_idx = i
+        # Smart Symbol Search: Prefer explicit over ambiguous
+        if (col ~ /ticker|symbol/) {
+          sym_idx = i
+          sym_ambig = 0
+        } else if (!sym_idx && (col ~ /isin|asset|instrument|contract/)) {
+          sym_idx = i
+          sym_ambig = 1
+        }
         
-        # Smart Quantity Search
-        if (!q_idx && (col ~ /no. of shares|quantity|amount|shares|vol|size/)) q_idx = i
+        # Smart Quantity Search: Prefer explicit over ambiguous
+        if (col ~ /no\. of shares|shares|quantity/) {
+          q_idx = i
+          q_ambig = 0
+        } else if (!q_idx && (col ~ /amount|vol|size/)) {
+          q_idx = i
+          q_ambig = 1
+        }
       }
       
       if (!t_idx || !sym_idx || !q_idx) {
         print "  ⚠️  Could not detect all headers (Date/Symbol/Qty) for verification." > "/dev/stderr"
         exit 1
+      }
+      if (sym_ambig || q_ambig) {
+        print "  ⚠️  Only ambiguous columns matched. Skipping JSON comparison." > "/dev/stderr"
+        exit 2
       }
     }
     NR>1 {

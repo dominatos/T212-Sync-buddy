@@ -20,16 +20,19 @@ import subprocess
 import json
 import csv
 import io
+from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 
 # --- CONFIGURATION ---
-load_dotenv()
+_script_dir = Path(__file__).resolve().parent
+REPO_ROOT = _script_dir.parent if _script_dir.name == "scripts" else _script_dir
+load_dotenv(dotenv_path=REPO_ROOT / ".env")
 
 DEMO          = os.getenv("T212_DEMO", "false").lower() == "true"
 LOOKBACK_DAYS = 7
-STATE_DIR     = ".state"
-INPUT_DIR     = "input"
+STATE_DIR     = str(REPO_ROOT / ".state")
+INPUT_DIR     = str(REPO_ROOT / "input")
 REQUEST_TIMEOUT = (30, 200)  # (connect_timeout, read_timeout)
 
 BASE_HOST = "https://demo.trading212.com" if DEMO else "https://live.trading212.com"
@@ -76,13 +79,13 @@ def make_headers(api_key: str, api_secret: str) -> dict:
     return {"Authorization": f"Basic {creds}"}
 
 
-def _parse_reset_timestamp(header_value: str | None) -> int | None:
+def safe_parse_reset(header_value: str | None) -> int | None:
     """Safely parse x-ratelimit-reset header to an epoch timestamp. Returns None on any failure."""
     if header_value is None:
         return None
     try:
         return int(header_value)
-    except (ValueError, TypeError):
+    except Exception:
         return None
 
 
@@ -93,9 +96,9 @@ def safe_get(url: str, headers: dict) -> requests.Response:
         resp = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
         print(f"  [RESP] {resp.status_code}")
         if resp.status_code == 429:
-            parsed_reset = _parse_reset_timestamp(resp.headers.get("x-ratelimit-reset"))
+            parsed = safe_parse_reset(resp.headers.get("x-ratelimit-reset"))
             # Wait until the reset window, minimum 10s to avoid tight loops; 60s fallback if missing/malformed
-            wait = max(10, parsed_reset - int(time.time()) + 1) if parsed_reset is not None else 60
+            wait = max(10, parsed - int(time.time()) + 1) if parsed is not None else 60
             print(f"  [RATE LIMIT] waiting {wait}s...")
             time.sleep(wait)
             continue  # retry the exact same request
@@ -110,8 +113,8 @@ def safe_post(url: str, headers: dict, json_body: dict) -> requests.Response:
         resp = requests.post(url, headers=headers, json=json_body, timeout=REQUEST_TIMEOUT)
         print(f"  [RESP] {resp.status_code}")
         if resp.status_code == 429:
-            parsed_reset = _parse_reset_timestamp(resp.headers.get("x-ratelimit-reset"))
-            wait = max(10, parsed_reset - int(time.time()) + 1) if parsed_reset is not None else 60
+            parsed = safe_parse_reset(resp.headers.get("x-ratelimit-reset"))
+            wait = max(10, parsed - int(time.time()) + 1) if parsed is not None else 60
             print(f"  [RATE LIMIT] waiting {wait}s...")
             time.sleep(wait)
             continue  # retry the exact same request
@@ -141,8 +144,8 @@ def _page_earliest(headers: dict, start_url: str, extract_date) -> datetime | No
             next_url = f"{BASE_HOST}{next_page}"  # reconstruct full URL from relative path
             remaining = int(resp.headers.get("x-ratelimit-remaining", 1))
             if remaining <= 1:  # about to exhaust the rate-limit bucket
-                parsed_reset = _parse_reset_timestamp(resp.headers.get("x-ratelimit-reset"))
-                wait = max(10, parsed_reset - int(time.time()) + 1) if parsed_reset is not None else 10
+                parsed = safe_parse_reset(resp.headers.get("x-ratelimit-reset"))
+                wait = max(10, parsed - int(time.time()) + 1) if parsed is not None else 10
                 print(f"  [RATE LIMIT] {remaining} remaining, waiting {wait}s...")
                 time.sleep(wait)
             else:
@@ -254,16 +257,22 @@ def load_state(prefix: str) -> dict:
     """Reads the last sync timestamp from the .state folder."""
     path = os.path.join(STATE_DIR, f"{prefix}.json")
     if os.path.exists(path):
-        with open(path) as f:
-            return json.load(f)
+        try:
+            with open(path, encoding="utf-8") as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            print(f"  ⚠️  State file corrupted, starting fresh: {path}")
+            return {}
     return {}
 
 
 def save_state(prefix: str, state: dict):
     """Saves the current sync timestamp to the .state folder."""
     path = os.path.join(STATE_DIR, f"{prefix}.json")
-    with open(path, "w") as f:
+    tmp_path = os.path.join(STATE_DIR, f"{prefix}.json.tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2)
+    os.replace(tmp_path, path)
     print(f"  [STATE] saved → {path}")
 
 
@@ -358,8 +367,12 @@ def main():
         fetch_account(account)
 
     print("\n✅ All accounts synched. Launching run-all.sh for conversion...")
-    script_dir = os.path.dirname(os.path.abspath(__file__))  # resolve relative to this script
-    subprocess.run(["bash", os.path.join(script_dir, "run-all.sh")], check=True)  # hand off to converter pipeline
+    script_path = REPO_ROOT / "scripts" / "run-all.sh"
+    if not script_path.exists():
+        script_path = REPO_ROOT / "run-all.sh"
+        
+    # Execute run-all.sh with REPO_ROOT as cwd to ensure it finds the correct directories
+    subprocess.run(["bash", str(script_path)], cwd=str(REPO_ROOT), check=True)
 
 
 if __name__ == "__main__":
