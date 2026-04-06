@@ -291,6 +291,8 @@ def normalize_csv(lines: list[str]) -> list[str]:
         row = next(csv.reader([line]))
         if len(row) < expected_cols:
             row += [""] * (expected_cols - len(row))  # pad short rows with empty fields
+        elif len(row) > expected_cols:
+            row = row[:expected_cols]  # truncate excess columns
         buf = io.StringIO()
         csv.writer(buf).writerow(row)  # re-serialize to ensure consistent quoting
         result.append(buf.getvalue().rstrip("\r\n"))
@@ -446,7 +448,10 @@ def main():
     print(f"\n✅ {len(accounts_with_csvs)} account(s) synced. Launching run-all.sh for conversion...")
     script_path = REPO_ROOT / "scripts" / "run-all.sh"
     if not script_path.exists():
-        script_path = REPO_ROOT / "run-all.sh"
+        raise SystemExit(
+            f"❌ Expected script not found: {script_path}\n"
+            f"   Ensure run-all.sh exists at the expected path within the repo layout."
+        )
 
     # Execute run-all.sh with REPO_ROOT as cwd to ensure it finds the correct directories.
     # Do NOT use check=True — we inspect per-account results even on partial failure.
