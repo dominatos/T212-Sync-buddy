@@ -29,6 +29,25 @@ if [[ ${#accounts[@]} -eq 0 ]]; then
     exit 1
 fi
 
+# Validate that every CSV prefix in input/ has a matching account
+orphan_found=false
+for csv_file in input/*[-_]*.csv; do
+    [[ -f "$csv_file" ]] || continue
+    fname=$(basename "$csv_file")
+    # Extract prefix: everything before the first '-' or '_'
+    csv_prefix="${fname%%[-_]*}"
+    csv_prefix=$(echo "$csv_prefix" | tr '[:upper:]' '[:lower:]')
+    if [[ -z "${accounts[$csv_prefix]+_}" ]]; then
+        echo "❌ Orphan CSV prefix '$csv_prefix' (from $fname) has no matching account in .env"
+        orphan_found=true
+    fi
+done
+if [[ "$orphan_found" == true ]]; then
+    echo "   Expected one of: ${!accounts[*]}"
+    echo "   Define PREFIX_GHOSTFOLIO_ACCOUNT_ID in .env for each prefix, or rename the CSV files."
+    exit 1
+fi
+
 # Iterate through discovered accounts/prefixes
 for prefix in "${!accounts[@]}"; do
   account_id="${accounts[$prefix]}"

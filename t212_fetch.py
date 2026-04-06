@@ -89,33 +89,53 @@ def safe_parse_reset(header_value: str | None) -> int | None:
         return None
 
 
-def safe_get(url: str, headers: dict) -> requests.Response:
-    """Wrapper for GET requests that handles 429 Rate Limiting."""
+MAX_429_RETRIES = 10  # Cap retries on 429 to prevent infinite blocking
+
+
+class RateLimitExceeded(Exception):
+    """Raised when the 429 retry limit is exhausted."""
+    pass
+
+
+def safe_get(url: str, headers: dict, max_retries: int = MAX_429_RETRIES) -> requests.Response:
+    """Wrapper for GET requests that handles 429 Rate Limiting with a retry cap."""
+    retries = 0
     while True:
         print(f"  [GET] {url}")
         resp = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
         print(f"  [RESP] {resp.status_code}")
         if resp.status_code == 429:
+            retries += 1
+            if retries > max_retries:
+                raise RateLimitExceeded(
+                    f"429 rate limit hit {retries} times for GET {url} — aborting"
+                )
             parsed = safe_parse_reset(resp.headers.get("x-ratelimit-reset"))
             # Wait until the reset window, minimum 10s to avoid tight loops; 60s fallback if missing/malformed
             wait = max(10, parsed - int(time.time()) + 1) if parsed is not None else 60
-            print(f"  [RATE LIMIT] waiting {wait}s...")
+            print(f"  [RATE LIMIT] retry {retries}/{max_retries}, waiting {wait}s...")
             time.sleep(wait)
             continue  # retry the exact same request
         resp.raise_for_status()
         return resp
 
 
-def safe_post(url: str, headers: dict, json_body: dict) -> requests.Response:
-    """Wrapper for POST requests that handles 429 Rate Limiting."""
+def safe_post(url: str, headers: dict, json_body: dict, max_retries: int = MAX_429_RETRIES) -> requests.Response:
+    """Wrapper for POST requests that handles 429 Rate Limiting with a retry cap."""
+    retries = 0
     while True:
         print(f"  [POST] {url}")
         resp = requests.post(url, headers=headers, json=json_body, timeout=REQUEST_TIMEOUT)
         print(f"  [RESP] {resp.status_code}")
         if resp.status_code == 429:
+            retries += 1
+            if retries > max_retries:
+                raise RateLimitExceeded(
+                    f"429 rate limit hit {retries} times for POST {url} — aborting"
+                )
             parsed = safe_parse_reset(resp.headers.get("x-ratelimit-reset"))
             wait = max(10, parsed - int(time.time()) + 1) if parsed is not None else 60
-            print(f"  [RATE LIMIT] waiting {wait}s...")
+            print(f"  [RATE LIMIT] retry {retries}/{max_retries}, waiting {wait}s...")
             time.sleep(wait)
             continue  # retry the exact same request
         resp.raise_for_status()
