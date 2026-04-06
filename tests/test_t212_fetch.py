@@ -18,7 +18,7 @@ import base64
 import time
 import requests.exceptions
 from datetime import datetime, timezone, timedelta
-
+from freezegun import freeze_time
 # Add parent directory to path so we can import t212_fetch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -482,10 +482,7 @@ class TestGetEarliestYear(unittest.TestCase):
     def test_no_activity_returns_current_year(self, mock_page):
         mock_page.return_value = None
         result = t212_fetch.get_earliest_year({})
-        # Bug 1 (tofix.md): uses datetime.now().year instead of
-        # datetime.now(timezone.utc).year — verify it at least returns an int
-        self.assertIsInstance(result, int)
-        self.assertGreaterEqual(result, 2020)
+        self.assertEqual(result, datetime.now(timezone.utc).year)
 
     @patch("t212_fetch._page_earliest")
     def test_partial_sources(self, mock_page):
@@ -633,7 +630,7 @@ class TestFetchAccount(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch.object(t212_fetch, "INPUT_DIR", tmpdir):
-                csv_path, cutoff = t212_fetch.fetch_account(self._make_account())
+                csv_path, _ = t212_fetch.fetch_account(self._make_account())
 
         self.assertIsNotNone(csv_path)
         mock_earliest.assert_called_once()
@@ -654,7 +651,7 @@ class TestFetchAccount(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch.object(t212_fetch, "INPUT_DIR", tmpdir):
-                csv_path, cutoff = t212_fetch.fetch_account(self._make_account())
+                csv_path, _ = t212_fetch.fetch_account(self._make_account())
 
         self.assertIsNotNone(csv_path)
 
@@ -675,7 +672,7 @@ class TestFetchAccount(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch.object(t212_fetch, "INPUT_DIR", tmpdir):
                 # This would raise TypeError before the fix
-                csv_path, cutoff = t212_fetch.fetch_account(self._make_account())
+                csv_path, _ = t212_fetch.fetch_account(self._make_account())
 
         self.assertIsNotNone(csv_path)
 
@@ -706,25 +703,11 @@ class TestFetchAccount(unittest.TestCase):
     @patch("t212_fetch.request_export")
     @patch("t212_fetch.get_earliest_year")
     @patch("t212_fetch.load_state")
-    @patch("t212_fetch.datetime")
+    @freeze_time("2027-08-15T14:30:45Z")
     def test_csv_filename_contract(
-        self, mock_datetime, mock_load, mock_earliest, mock_req_exp, mock_wait, mock_dl, mock_sleep
+        self, mock_load, mock_earliest, mock_req_exp, mock_wait, mock_dl, mock_sleep
     ):
         """CSV filename follows prefix-YYYY-MM-DD-HHMMSS.csv contract with deterministic time."""
-        # NOTE: We patch t212_fetch.datetime to freeze time deterministically.
-        # - mock_datetime.now() returns our frozen timestamp (used by fetch_account
-        #   for `now = datetime.now(timezone.utc)` and date_str formatting).
-        # - mock_datetime.side_effect delegates datetime(year, month, day, ...)
-        #   constructor calls back to the real class (used for range construction
-        #   like `datetime(start_year, 1, 1, tzinfo=timezone.utc)`).
-        # - mock_datetime.fromisoformat delegates to the real class (used by
-        #   incremental mode, not exercised here but must not break).
-        # This coupling is fragile but avoids adding freezegun as a dependency.
-        # If freezegun is added to the project, replace this with @freeze_time.
-        frozen_time = datetime(2027, 8, 15, 14, 30, 45, tzinfo=timezone.utc)
-        mock_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
-        mock_datetime.now.return_value = frozen_time
-
         mock_load.return_value = {}
         mock_earliest.return_value = 2026
         mock_req_exp.return_value = 1
