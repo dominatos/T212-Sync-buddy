@@ -55,7 +55,7 @@ A universal Bash script for syncing CSV exports to Ghostfolio.
 - **Account Discovery**: Automatically finds all prefixed accounts in `.env`.
 - **Docker Integration**: Launches the `dickwolff/export-to-ghostfolio` container for each account.
 - **Smart Verification**: Automatically detects column headers (Date, Symbol, Quantity) in any CSV format to cross-verify the resulting JSON against the source CSV.
-- **Universal Support**: Works with 26+ brokers supported by the T212-Sync-buddy project (Trading 212, Revolut, IBKR, DEGIRO, etc.).
+- **Universal Support**: Works with 26+ brokers supported by the underlying `dickwolff/export-to-ghostfolio` repository (Trading 212, Revolut, IBKR, DEGIRO, etc.).
 - **Organization**: Moves completed imports to `out/account_name/` and archives processed CSVs to `input/done/`.
 
 ### systemdunits/T212-Sync-buddy.service
