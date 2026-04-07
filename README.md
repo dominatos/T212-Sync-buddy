@@ -1,6 +1,8 @@
-# Trading212 → Ghostfolio Auto-Import: Installation Guide
+# T212-Sync-buddy: Automated Trading 212 to Ghostfolio Sync
 
-This guide describes how to automate the fetching of transaction history from Trading 212 and importing it into Ghostfolio with support for multiple accounts. If you have just one account, you still need to use prefix in .env file!
+**T212-Sync-buddy** is a fully automated synchronization pipeline designed to safely extract your transaction history from the Trading 212 API and seamlessly import it into your Ghostfolio instance. 
+
+Built for reliability and data integrity, this service handles everything from initial data bootstraps and smart Trading 212 API rate-limit management to automated data normalization and strict cross-verification. Whether you manage a single portfolio or sync multiple distinct Trading 212 accounts simultaneously, this tool runs quietly in the background (via Docker or systemd) to keep your Ghostfolio dashboard perfectly in sync.
 
 ## Prerequisites
 
