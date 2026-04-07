@@ -85,11 +85,14 @@ for prefix in "${!accounts[@]}"; do
     cp "$csv_file" "temp/$csv_name"
 
     # Start the Docker-based converter (Auto-detects broker type from CSV contents)
+    # Use HOST_SCRIPTS_DIR when running inside Docker (container paths ≠ host paths for socket mounts)
+    _mount_base="${HOST_SCRIPTS_DIR:-$(pwd)}"
+
     docker run --rm \
       --user "$(id -u):$(id -g)" \
-      -v "$(pwd)/temp:/var/tmp/e2g-input" \
-      -v "$(pwd)/out:/var/tmp/e2g-output" \
-      -v "$(pwd)/cache:/var/tmp/e2g-cache" \
+      -v "${_mount_base}/temp:/var/tmp/e2g-input" \
+      -v "${_mount_base}/out:/var/tmp/e2g-output" \
+      -v "${_mount_base}/cache:/var/tmp/e2g-cache" \
       --env INPUT_FILE="$csv_name" \
       --env GHOSTFOLIO_ACCOUNT_ID="$account_id" \
       --env GHOSTFOLIO_VALIDATE="${GHOSTFOLIO_VALIDATE:-true}" \
@@ -135,7 +138,7 @@ for prefix in "${!accounts[@]}"; do
     echo "  🔍 Verifying import against source CSV (Universal Header Check)..."
     
     # 1. Generate keys from JSON (merge all chunks)
-    jq -r '.activities[]? | "\(.date[0:10])_\(.symbol | split(".")[0] | split(":")[0])_\(.quantity)"' "${json_files[@]}" | sort > temp/json_keys.txt
+    jq -r '.activities[]? | "\(.date[0:10])_\(.quantity)_\(.unitPrice)"' "${json_files[@]}" | sort > temp/json_keys.txt
 
     # 2. Extract keys from CSV using smart header detection
     gawk -v FPAT='([^,]*)|("[^"]+")' '
@@ -148,6 +151,7 @@ for prefix in "${!accounts[@]}"; do
         if (!t_idx && (col ~ /time|date|timestamp/)) t_idx = i
         
         # Smart Symbol Search: Prefer explicit over ambiguous
+        # (still needed to filter non-trade rows by empty ticker)
         if (col ~ /ticker|symbol/) {
           sym_idx = i
           sym_ambig = 0
@@ -164,10 +168,15 @@ for prefix in "${!accounts[@]}"; do
           q_idx = i
           q_ambig = 1
         }
+        
+        # Smart Price Search: "price / share" but NOT "currency (price / share)"
+        if (col ~ /price \/ share|price per share|unit price/ && col !~ /currency/) {
+          p_idx = i
+        }
       }
       
-      if (!t_idx || !sym_idx || !q_idx) {
-        print "  ⚠️  Could not detect all headers (Date/Symbol/Qty) for verification." > "/dev/stderr"
+      if (!t_idx || !sym_idx || !q_idx || !p_idx) {
+        print "  ⚠️  Could not detect all headers (Date/Symbol/Qty/Price) for verification." > "/dev/stderr"
         exit 1
       }
       if (sym_ambig || q_ambig) {
@@ -179,11 +188,13 @@ for prefix in "${!accounts[@]}"; do
       val_t = $t_idx; gsub(/"/, "", val_t)
       val_s = $sym_idx; gsub(/"/, "", val_s)
       val_q = $q_idx; gsub(/"/, "", val_q)
+      val_p = $p_idx; gsub(/"/, "", val_p)
       
       date = substr(val_t, 1, 10)
       # Clean symbol suffix if present in CSV
       ticker = val_s; sub(/\..*/, "", ticker); sub(/:.*/, "", ticker)
       qty = val_q
+      price = val_p
       
       # Skip non-trade rows (deposits, withdrawals, interest, etc.) — no ticker means
       # Ghostfolio converter intentionally ignores them, so they are not discrepancies
@@ -192,8 +203,10 @@ for prefix in "${!accounts[@]}"; do
       if (date ~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}/) {
         if (qty ~ /\./) { sub(/0+$/, "", qty); sub(/\.$/, "", qty); }
         if (qty == "" || qty == "0") qty = "0"
+        if (price ~ /\./) { sub(/0+$/, "", price); sub(/\.$/, "", price); }
         
-        printf "%s_%s_%s\t%s\n", date, ticker, qty, $0
+        # Key: date_quantity_unitPrice (symbol-independent to handle upstream remapping)
+        printf "%s_%s_%s\t%s\n", date, qty, price, $0
       }
     }' "$csv_file" 2>temp/verify_error.txt | sort -k1,1 > temp/csv_data.txt || {
        cat temp/verify_error.txt

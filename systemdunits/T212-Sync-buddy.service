@@ -6,8 +6,8 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 User=YOUR_USER
-WorkingDirectory=/path/to/Export-To-Ghostfolio/scripts
-ExecStart=/path/to/Export-To-Ghostfolio/scripts/venv/bin/python3 t212_fetch.py
+WorkingDirectory=/path/to/T212-Sync-buddy
+ExecStart=/path/to/T212-Sync-buddy/venv/bin/python3 t212_fetch.py
 StandardOutput=journal
 StandardError=journal
 

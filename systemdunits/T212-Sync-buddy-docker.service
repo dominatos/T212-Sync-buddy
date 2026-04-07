@@ -1,0 +1,17 @@
+[Unit]
+Description=Trading212 → Ghostfolio daily import (Docker)
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=YOUR_USER
+WorkingDirectory=/path/to/T212-Sync-buddy
+Environment=HOST_SCRIPTS_DIR=/path/to/T212-Sync-buddy
+ExecStart=/usr/bin/docker compose run --rm fetcher
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

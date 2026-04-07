@@ -12,10 +12,12 @@ Features:
 - Rate Limit Awareness: Gracefully handles 429 errors using API headers.
 """
 
+import argparse
 import requests
 import base64
 import time
 import os
+import shutil
 import subprocess
 import json
 import csv
@@ -26,13 +28,18 @@ from dotenv import load_dotenv
 
 # --- CONFIGURATION ---
 _script_dir = Path(__file__).resolve().parent
-REPO_ROOT = _script_dir.parent if _script_dir.name == "scripts" else _script_dir
-load_dotenv(dotenv_path=REPO_ROOT / ".env")
+
+# Configurable .env path: set T212_ENV_FILE to override (default: scripts/.env)
+_env_file = os.getenv("T212_ENV_FILE", str(_script_dir / ".env"))
+load_dotenv(dotenv_path=_env_file)
+
+# Configurable data root: set T212_DATA_DIR to override (default: scripts/)
+_data_dir = Path(os.getenv("T212_DATA_DIR", str(_script_dir)))
 
 DEMO          = os.getenv("T212_DEMO", "false").lower() == "true"
 LOOKBACK_DAYS = 7
-STATE_DIR     = str(REPO_ROOT / ".state")
-INPUT_DIR     = str(REPO_ROOT / "input")
+STATE_DIR     = str(_data_dir / ".state")
+INPUT_DIR     = str(_data_dir / "input")
 REQUEST_TIMEOUT = (30, 200)  # (connect_timeout, read_timeout)
 
 BASE_HOST = "https://demo.trading212.com" if DEMO else "https://live.trading212.com"
@@ -417,6 +424,40 @@ def fetch_account(account: dict) -> tuple[str | None, datetime]:
     return csv_path, now
 
 
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parses command-line arguments for the Trading212 fetcher.
+    Pass argv explicitly for testing; defaults to sys.argv[1:]."""
+    parser = argparse.ArgumentParser(
+        description="Trading212 → Ghostfolio Data Fetcher"
+    )
+    parser.add_argument(
+        "--force-initial-sync",
+        action="store_true",
+        help="Wipe all data (out/, input/, .state/, temp/, cache/) and perform a full re-import from scratch.",
+    )
+    return parser.parse_args(argv)
+
+
+def force_initial_sync():
+    """Deletes out/, input/, .state/, temp/, and cache/ directories for a clean re-import."""
+    dirs_to_wipe = [
+        _data_dir / "out",
+        _data_dir / "input",
+        _data_dir / ".state",
+        _data_dir / "temp",
+        _data_dir / "cache",
+    ]
+    print("⚠️  --force-initial-sync: wiping all data directories...")
+    for d in dirs_to_wipe:
+        if d.exists():
+            shutil.rmtree(d)
+            print(f"  🗑️  Deleted {d}")
+    # Re-create required directories
+    os.makedirs(STATE_DIR, exist_ok=True)
+    os.makedirs(INPUT_DIR, exist_ok=True)
+    print("  ✅ Clean slate ready.\n")
+
+
 def main():
     """Orchestrates multi-account Trading212 fetch and Ghostfolio conversion pipeline.
 
@@ -424,6 +465,9 @@ def main():
     hands off CSVs to run-all.sh for Ghostfolio import, and persists state only
     for successfully verified accounts.
     """
+    args = parse_args()
+    if args.force_initial_sync:
+        force_initial_sync()
     accounts = load_accounts()
     print(f"Found {len(accounts)} configured account(s): {[a['prefix'].upper() for a in accounts]}")
 
@@ -454,16 +498,16 @@ def main():
         return
 
     print(f"\n✅ {len(accounts_with_csvs)} account(s) synced. Launching run-all.sh for conversion...")
-    script_path = REPO_ROOT / "scripts" / "run-all.sh"
+    script_path = _data_dir / "run-all.sh"
     if not script_path.exists():
         raise SystemExit(
             f"❌ Expected script not found: {script_path}\n"
             f"   Ensure run-all.sh exists at the expected path within the repo layout."
         )
 
-    # Execute run-all.sh with REPO_ROOT as cwd to ensure it finds the correct directories.
+    # Execute run-all.sh with _data_dir as cwd to ensure it finds the correct directories.
     # Do NOT use check=True — we inspect per-account results even on partial failure.
-    run_result = subprocess.run(["bash", str(script_path)], cwd=str(REPO_ROOT))
+    run_result = subprocess.run(["bash", str(script_path)], cwd=str(_data_dir))
 
     # Determine per-account success AFTER run-all.sh completes (never mid-pipeline).
     # An account succeeded only if its specific CSV is not in input/, quarantine/, or unverified/

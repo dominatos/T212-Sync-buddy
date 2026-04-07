@@ -1,0 +1,22 @@
+services:
+  fetcher:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Tell run-all.sh to use host paths for Docker volume mounts
+      HOST_SCRIPTS_DIR: ${HOST_SCRIPTS_DIR}
+    volumes:
+      # Docker socket — lets run-all.sh spawn converter containers
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Persistent data directories
+      - ./.state:/app/scripts/.state
+      - ./input:/app/scripts/input
+      - ./out:/app/scripts/out
+      - ./cache:/app/scripts/cache
+      - ./temp:/app/scripts/temp
+      # .env needed by run-all.sh (source .env)
+      - ./.env:/app/scripts/.env:ro
