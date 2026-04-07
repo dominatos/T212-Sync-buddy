@@ -418,6 +418,12 @@ def fetch_account(account: dict) -> tuple[str | None, datetime]:
 
 
 def main():
+    """Orchestrates multi-account Trading212 fetch and Ghostfolio conversion pipeline.
+
+    Loads configured accounts from .env, fetches transaction history for each,
+    hands off CSVs to run-all.sh for Ghostfolio import, and persists state only
+    for successfully verified accounts.
+    """
     accounts = load_accounts()
     print(f"Found {len(accounts)} configured account(s): {[a['prefix'].upper() for a in accounts]}")
 
