@@ -13,7 +13,7 @@ RUN apt-get update && \
 # Copy Docker CLI from official image (avoids docker.io which only provides the daemon)
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 
-WORKDIR /app/scripts
+WORKDIR /app
 
 # Install Python dependencies
 COPY requirements.txt .

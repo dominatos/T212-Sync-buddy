@@ -107,7 +107,7 @@ echo 'HOST_SCRIPTS_DIR=/absolute/path/to/T212-Sync-buddy' >> .env
 
 # 3. Build and run
 docker compose build
-docker compose run --rm fetcher
+docker compose run --rm T212-Sync-buddy
 ```
 
 > [!NOTE]
@@ -216,7 +216,7 @@ python3 t212_fetch.py
 
 ```bash
 cd T212-Sync-buddy
-docker compose run --rm fetcher
+docker compose run --rm T212-Sync-buddy
 ```
 
 </details>
@@ -227,7 +227,7 @@ The **first run** (bootstrap) will:
 3.  **Save & Import**: Save CSVs to `input/` and trigger `run-all.sh` to update Ghostfolio.
 
 > [!IMPORTANT]
-> The scripts now operate exclusively within the `` directory. All input files (`input/`) and generated outputs (`out/`, `.state/`) will be found inside this folder.
+> The scripts now operate exclusively within the `T212-Sync-buddy` directory. All input files (`input/`) and generated outputs (`out/`, `.state/`) will be found inside this folder.
 
 After this run, `.state/prefix1.json` and `.state/prefix2.json` are created. All future runs will only fetch the last 7 days. Status is tracked in `.state/`.
 
@@ -349,7 +349,7 @@ journalctl -u T212-Sync-buddy-sync-docker.service -n 50 --since "yesterday"
 #### Routine Maintenance
 - **Force a full re-import**: If you need to rebuild your history from scratch, first remove the existing activities for that account in Ghostfolio, then run with `--force-initial-sync` (this wipes `out/`, `input/`, `.state/`, `temp/`, `cache/`):
   ```bash
-  docker compose run --rm fetcher python3 t212_fetch.py --force-initial-sync
+  docker compose run --rm T212-Sync-buddy python3 t212_fetch.py --force-initial-sync
   ```
 - **Manual Cleanup**: To quickly reset your local data without running the fetcher:
   ```bash
@@ -361,7 +361,7 @@ journalctl -u T212-Sync-buddy-sync-docker.service -n 50 --since "yesterday"
   ```
 - **View container logs** (if running interactively):
   ```bash
-  docker compose logs fetcher
+  docker compose logs T212-Sync-buddy
   ```
 - **Temporary Disable**: 
   ```bash
@@ -383,7 +383,7 @@ journalctl -u T212-Sync-buddy-sync-docker.service -n 50 --since "yesterday"
 | `❌ JSON not found` | Check if Docker is running properly: `sudo systemctl status docker`. |
 | Timer not running | Inspect logs for path or permission errors: `journalctl -u T212-Sync-buddy.service`. |
 | `docker: command not found` (inside container) | Rebuild the image: `docker compose build --no-cache`. Ensure the Dockerfile uses multi-stage `COPY --from=docker-cli`. |
-| `HOST_SCRIPTS_DIR` warning | Set `HOST_SCRIPTS_DIR` in `.env` to the absolute host path of the `` directory. |
+| `HOST_SCRIPTS_DIR` warning | Set `HOST_SCRIPTS_DIR` in `.env` to the absolute host path of the `T212-Sync-buddy` directory. |
 
 </details>
 

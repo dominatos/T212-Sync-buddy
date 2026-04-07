@@ -29,11 +29,11 @@ from dotenv import load_dotenv
 # --- CONFIGURATION ---
 _script_dir = Path(__file__).resolve().parent
 
-# Configurable .env path: set T212_ENV_FILE to override (default: scripts/.env)
+# Configurable .env path: set T212_ENV_FILE to override (default: .env)
 _env_file = os.getenv("T212_ENV_FILE", str(_script_dir / ".env"))
 load_dotenv(dotenv_path=_env_file)
 
-# Configurable data root: set T212_DATA_DIR to override (default: scripts/)
+# Configurable data root: set T212_DATA_DIR to override (default: ./)
 _data_dir = Path(os.getenv("T212_DATA_DIR", str(_script_dir)))
 
 DEMO          = os.getenv("T212_DEMO", "false").lower() == "true"

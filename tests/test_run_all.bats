@@ -2,7 +2,7 @@
 #
 # BATS tests for run-all.sh
 #
-# Run:  bats scripts/tests/test_run_all.bats
+# Run:  bats tests/test_run_all.bats
 #
 # These tests create isolated temp workspaces with mock docker, .env,
 # and fixture CSVs to test each logical section of run-all.sh.
@@ -18,10 +18,10 @@ setup() {
     mkdir -p "$TEST_DIR/input"
     mkdir -p "$TEST_DIR/out"
     mkdir -p "$TEST_DIR/cache"
-    mkdir -p "$TEST_DIR/scripts"
+    mkdir -p "$TEST_DIR/temp"
 
     # Copy the script under test
-    cp "$BATS_TEST_DIRNAME/../run-all.sh" "$TEST_DIR/scripts/run-all.sh"
+    cp "$BATS_TEST_DIRNAME/../run-all.sh" "$TEST_DIR/run-all.sh"
 
     # Create mock bin directory and prepend to PATH
     MOCK_BIN="$TEST_DIR/mock_bin"
@@ -129,7 +129,7 @@ CSV
     # Clear relevant env vars
     unset ISA_API_KEY ISA_GHOSTFOLIO_ACCOUNT_ID GHOSTFOLIO_ACCOUNT_ID 2>/dev/null || true
 
-    run bash "$TEST_DIR/scripts/run-all.sh"
+    run bash "$TEST_DIR/run-all.sh"
     [ "$status" -eq 1 ]
     [[ "$output" == *"No accounts found"* ]]
 }
@@ -147,7 +147,7 @@ ENV
     unset ISA_API_KEY ISA_GHOSTFOLIO_ACCOUNT_ID GHOSTFOLIO_ACCOUNT_ID 2>/dev/null || true
 
     cd "$TEST_DIR"
-    run bash scripts/run-all.sh
+    run bash run-all.sh
     [ "$status" -eq 1 ]
     [[ "$output" == *"No accounts found"* ]]
 }
@@ -161,7 +161,7 @@ ENV
     csv_name=$(create_matching_csv "isa")
 
     cd "$TEST_DIR"
-    run bash scripts/run-all.sh
+    run bash run-all.sh
     [ "$status" -eq 0 ]
 
     # CSV should be moved to input/done/
@@ -184,7 +184,7 @@ ENV
     create_matching_csv "cfd"
 
     cd "$TEST_DIR"
-    run bash scripts/run-all.sh
+    run bash run-all.sh
     [ "$status" -eq 1 ]
     [[ "$output" == *"Orphan CSV prefix"* ]]
 }
@@ -206,7 +206,7 @@ DOCKER_MOCK
     chmod +x "$MOCK_BIN/docker"
 
     cd "$TEST_DIR"
-    run bash scripts/run-all.sh
+    run bash run-all.sh
 
     # Bug 2 fixed: had_failure is now set, so script correctly exits 1
     [ "$status" -eq 1 ]
@@ -246,7 +246,7 @@ DOCKER_MOCK
     chmod +x "$MOCK_BIN/docker"
 
     cd "$TEST_DIR"
-    run bash scripts/run-all.sh
+    run bash run-all.sh
     [ "$status" -eq 1 ]
 
     # CSV should be quarantined
@@ -269,7 +269,7 @@ ENV
     create_matching_csv "default"
 
     cd "$TEST_DIR"
-    run bash scripts/run-all.sh
+    run bash run-all.sh
     [ "$status" -eq 0 ]
     [[ "$output" == *"Verification Successful"* ]]
 }
@@ -283,7 +283,7 @@ ENV
     csv_name=$(create_matching_csv "isa")  # lowercase in filename
 
     cd "$TEST_DIR"
-    run bash scripts/run-all.sh
+    run bash run-all.sh
     [ "$status" -eq 0 ]
     [ -f "input/done/$csv_name" ]
 }
@@ -298,7 +298,7 @@ ENV
     csv2=$(create_matching_csv "isa" "2024-06-16")
 
     cd "$TEST_DIR"
-    run bash scripts/run-all.sh
+    run bash run-all.sh
     [ "$status" -eq 0 ]
 
     # Both should be archived
@@ -315,7 +315,7 @@ ENV
     # Don't create any CSV files
 
     cd "$TEST_DIR"
-    run bash scripts/run-all.sh
+    run bash run-all.sh
     [ "$status" -eq 0 ]
     [[ "$output" == *"No isa CSV files found"* ]]
 }
@@ -329,7 +329,7 @@ ENV
     csv_name=$(create_csv_with_nontrade "isa")
 
     cd "$TEST_DIR"
-    run bash scripts/run-all.sh
+    run bash run-all.sh
     [ "$status" -eq 0 ]
 
     # Should succeed — the deposit row with empty ticker is skipped
@@ -372,7 +372,7 @@ DOCKER_MOCK
     chmod +x "$MOCK_BIN/docker"
 
     cd "$TEST_DIR"
-    run bash scripts/run-all.sh
+    run bash run-all.sh
     [ "$status" -eq 1 ]
     [[ "$output" == *"failures"* ]]
 }
@@ -393,7 +393,7 @@ Deposit,2024-07-01T08:00:00Z,,,,,,,,2500.00,USD,,10000
 CSV
 
     cd "$TEST_DIR"
-    run bash scripts/run-all.sh
+    run bash run-all.sh
     [ "$status" -eq 0 ]
 
     # CSV should be archived to done/

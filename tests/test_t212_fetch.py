@@ -3,7 +3,7 @@
 Unit tests for t212_fetch.py — all public functions.
 
 Framework: unittest + unittest.mock (requires freezegun: pip install freezegun)
-Run:       python3 -m unittest scripts/tests/test_t212_fetch.py -v
+Run:       python3 -m unittest tests/test_t212_fetch.py -v
            (from REPO_ROOT)
 """
 

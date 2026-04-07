@@ -1,5 +1,5 @@
 services:
-  fetcher:
+  T212-Sync-buddy:
     build:
       context: .
       dockerfile: Dockerfile
@@ -13,10 +13,10 @@ services:
       # Docker socket — lets run-all.sh spawn converter containers
       - /var/run/docker.sock:/var/run/docker.sock
       # Persistent data directories
-      - ./.state:/app/scripts/.state
-      - ./input:/app/scripts/input
-      - ./out:/app/scripts/out
-      - ./cache:/app/scripts/cache
-      - ./temp:/app/scripts/temp
+      - ./.state:/app/.state
+      - ./input:/app/input
+      - ./out:/app/out
+      - ./cache:/app/cache
+      - ./temp:/app/temp
       # .env needed by run-all.sh (source .env)
-      - ./.env:/app/scripts/.env:ro
+      - ./.env:/app/.env:ro
