@@ -1,0 +1,36 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: "en-US"
+
+reviews:
+  profile: "assertive"
+  auto_review:
+    enabled: true
+  ignore_title_keywords:
+    - "wip"
+    - "draft"
+    - "experimental"
+  
+  instructions: |
+    - You are acting as a Senior Engineer reviewing this repository.
+    - All code, comments, logs, documentation, and outputs must be in English.
+    - Preserve existing behavior: Do NOT suggest deleting, renaming, merging, or refactoring functionality unless there is a critical bug or explicitly requested. "Simple and correct beats clever and fragile."
+    - No "smart improvements": Do NOT optimize, refactor, simplify, or redesign unless explicitly requested.
+    - Data Security: Ensure no sensitive data (API keys, secrets, tokens, passwords) are committed. Only `.env.sample` is allowed, never `.env`.
+    - Ensure documentation updates: Any new/changed config must be reflected in `.env.sample` and `README.md`.
+    - Data integrity & Idempotency: Highlight any code that breaks CSV ↔ JSON cross-verification or idempotency of state persistence runs.
+
+file_path_instructions:
+  - path: "**/*.sh"
+    instructions: |
+      - Bash 4.0+ compliant (`set -e -o pipefail`, associative arrays, `mapfile`).
+      - Use explicit paths or environment variables.
+      - Ensure ShellCheck clean where possible.
+      - Ensure tests exist in `tests/test_run_all.bats` for new logic.
+      
+  - path: "**/*.py"
+    instructions: |
+      - Python 3.10+ compatibility is required (use type hints and modern syntax).
+      - Main dependencies are `requests` and `python-dotenv`. Consult the project owner before introducing new external libraries.
+      - Ensure API rate-limiting is handled gracefully with retry caps.
+      - State persistence must strictly be transactional (written only on confirmed success).
+      - Ensure unit tests using `unittest` and `unittest.mock` exist in `tests/test_t212_fetch.py`.
