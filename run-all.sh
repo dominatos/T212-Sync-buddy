@@ -78,11 +78,23 @@ for prefix in "${!accounts[@]}"; do
 
     echo "  📄 Processing broker file: $csv_name"
 
-    # Preparation
+    # Preparation: Clean temp directory for this CSV processing run
     mkdir -p temp out cache
     rm -f out/ghostfolio-*.json
-    rm -f temp/*.csv
+    rm -f temp/*.csv temp/*.txt           # Clean both CSVs and old test files
     cp "$csv_file" "temp/$csv_name"
+
+    # Preprocess CSV: Replace problematic tickers (.L, .XC) with ISINs for proper price lookup
+    if [[ -f "preprocess_isin.py" ]]; then
+      echo "  🔄 Preprocessing CSV (replacing .L, .XC tickers with ISINs)..."
+      python3 preprocess_isin.py "temp/$csv_name" "temp/${csv_name}.preprocessed" || {
+        echo "  ❌ Preprocessing failed for $csv_name"
+        had_failure=1
+        continue
+      }
+      mv "temp/${csv_name}.preprocessed" "temp/$csv_name"
+      echo "  ✅ Preprocessing complete"
+    fi
 
     # Start the Docker-based converter (Auto-detects broker type from CSV contents)
     # Use HOST_SCRIPTS_DIR when running inside Docker (container paths ≠ host paths for socket mounts)
@@ -125,7 +137,7 @@ for prefix in "${!accounts[@]}"; do
       json_files+=("$dest")
       ((++idx))
     done
-    rm -f "temp/$csv_name"
+    # NOTE: Keep temp/$csv_name for verification (may be preprocessed) - delete after verification
 
     total_count=0
     for jf in "${json_files[@]}"; do
@@ -215,6 +227,7 @@ for prefix in "${!accounts[@]}"; do
        mkdir -p "input/unverified"
        mv "$csv_file" "input/unverified/"
        echo "  📦 Archived $csv_name → input/unverified/"
+       rm -f "temp/$csv_name"
        had_failure=1
        continue
     }
@@ -234,7 +247,7 @@ for prefix in "${!accounts[@]}"; do
       mkdir -p "input/quarantine"
       mv "$csv_file" "input/quarantine/"
       echo "  🚫 Quarantined $csv_name → input/quarantine/ (verification failed)"
-      rm -f temp/json_keys.txt temp/csv_data.txt temp/csv_keys.txt temp/missing_keys.txt temp/verify_error.txt
+      rm -f temp/json_keys.txt temp/csv_data.txt temp/csv_keys.txt temp/missing_keys.txt temp/verify_error.txt "temp/$csv_name"
       had_failure=1
       continue
     else
@@ -242,7 +255,10 @@ for prefix in "${!accounts[@]}"; do
     fi
     
     rm -f temp/json_keys.txt temp/csv_data.txt temp/csv_keys.txt temp/missing_keys.txt temp/verify_error.txt
-    
+
+    # Clean up temp CSV after verification completes
+    rm -f "temp/$csv_name"
+
     # Archive processed CSV to prevent replay on next run
     mkdir -p "input/done"
     mv "$csv_file" "input/done/"

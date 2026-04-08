@@ -3,3 +3,7 @@ tests/__pycache__/test_t212_fetch.cpython-312.pyc
 INSTRUCTIONS.md
 tofix.md
 .env
+post.md
+tests/temp/differenace-in-balance.md
+.gitignore
+tests/temp/analyze_cash.py
