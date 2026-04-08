@@ -58,10 +58,10 @@ A universal Bash script for syncing CSV exports to Ghostfolio.
 - **Universal Support**: Works with 26+ brokers supported by the underlying `dickwolff/export-to-ghostfolio` repository (Trading 212, Revolut, IBKR, DEGIRO, etc.).
 - **Organization**: Moves completed imports to `out/account_name/` and archives processed CSVs to `input/done/`.
 
-### systemdunits/T212-Sync-buddy.service
+### systemdunits/t212-sync-buddy.service
 A Linux systemd service unit that defines *how* to run the synchronization. It calls `t212_fetch.py` using the dedicated Python virtual environment.
 
-### systemdunits/T212-Sync-buddy.timer
+### systemdunits/t212-sync-buddy.timer
 A systemd timer that controls *when* the sync runs. By default, it is configured to trigger the synchronization daily at **08:00 AM**.
 
 </details>
@@ -243,20 +243,20 @@ To run the sync automatically every day, set up a systemd timer.
 
 1.  **Copy the unit files** (assuming you have them prepared in a `systemdunits` folder):
     ```bash
-    sudo cp systemdunits/T212-Sync-buddy.service /etc/systemd/system/
-    sudo cp systemdunits/T212-Sync-buddy.timer /etc/systemd/system/
+    sudo cp systemdunits/t212-sync-buddy.service /etc/systemd/system/
+    sudo cp systemdunits/t212-sync-buddy.timer /etc/systemd/system/
     ```
 
 2.  **Configure the service**:
     ```bash
-    sudo nano /etc/systemd/system/T212-Sync-buddy.service
+    sudo nano /etc/systemd/system/t212-sync-buddy.service
     ```
     Ensure the `User`, `WorkingDirectory`, and `ExecStart` paths match your actual installation path.
 
 3.  **Enable and start**:
     ```bash
     sudo systemctl daemon-reload
-    sudo systemctl enable --now T212-Sync-buddy.timer
+    sudo systemctl enable --now t212-sync-buddy.timer
     ```
 
 </details>
@@ -300,16 +300,16 @@ If you use the Docker Compose setup (Section 3, Option B), use these systemd uni
 #### Verify the Timer
 ```bash
 # Check if the timer is active
-systemctl status T212-Sync-buddy.timer
+systemctl status t212-sync-buddy.timer
 
 # View next scheduled run
-systemctl list-timers T212-Sync-buddy.timer
+systemctl list-timers t212-sync-buddy.timer
 
 # Manually trigger a run now to test
-sudo systemctl start T212-Sync-buddy.service
+sudo systemctl start t212-sync-buddy.service
 
 # View latest logs
-journalctl -u T212-Sync-buddy.service -n 50 --since "yesterday"
+journalctl -u t212-sync-buddy.service -n 50 --since "yesterday"
 ```
 
 #### Routine Maintenance
@@ -324,7 +324,7 @@ journalctl -u T212-Sync-buddy.service -n 50 --since "yesterday"
   ```
 - **Temporary Disable**: 
   ```bash
-  sudo systemctl stop T212-Sync-buddy.timer
+  sudo systemctl stop t212-sync-buddy.timer
   ```
 
 </details>
@@ -382,7 +382,7 @@ journalctl -u t212-sync-buddy-docker.service -n 50 --since "yesterday"
 | `429 Too Many Requests` | The script handles this automatically; it will pause and resume when allowed. |
 | `Invalid Record Length` | Handled automatically by the script's normalization logic. |
 | `❌ JSON not found` | Check if Docker is running properly: `sudo systemctl status docker`. |
-| Timer not running | Inspect logs for path or permission errors: `journalctl -u T212-Sync-buddy.service`. |
+| Timer not running | Inspect logs for path or permission errors: `journalctl -u t212-sync-buddy.service`. |
 | `docker: command not found` (inside container) | Rebuild the image: `docker compose build --no-cache`. Ensure the Dockerfile uses multi-stage `COPY --from=docker-cli`. |
 | `HOST_SCRIPTS_DIR` warning | Set `HOST_SCRIPTS_DIR` in `.env` to the absolute host path of the `T212-Sync-buddy` directory. |
 
