@@ -1,5 +1,6 @@
 services:
-  T212-Sync-buddy:
+  t212-sync-buddy:
+    image: t212-sync-buddy
     build:
       context: .
       dockerfile: Dockerfile

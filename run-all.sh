@@ -137,8 +137,9 @@ for prefix in "${!accounts[@]}"; do
     # --- UNIVERSAL VERIFICATION STEP ---
     echo "  🔍 Verifying import against source CSV (Universal Header Check)..."
     
-    # 1. Generate keys from JSON (merge all chunks)
-    jq -r '.activities[]? | "\(.date[0:10])_\(.quantity)_\(.unitPrice)"' "${json_files[@]}" | sort > temp/json_keys.txt
+    # 1. Generate keys from JSON (merge all chunks and normalize numbers)
+    jq -r '.activities[]? | "\(.date[0:10])_\(.quantity)_\(.unitPrice)"' "${json_files[@]}" | \
+      sed -r 's/(\.[0-9]*[1-9])0+(_|$)/\1\2/g; s/\.0+(_|$)/\1/g' | sort > temp/json_keys.txt
 
     # 2. Extract keys from CSV using smart header detection
     gawk -v FPAT='([^,]*)|("[^"]+")' '

@@ -109,7 +109,7 @@ echo 'HOST_SCRIPTS_DIR=/absolute/path/to/T212-Sync-buddy' >> .env
 
 # 3. Build and run
 docker compose build
-docker compose run --rm T212-Sync-buddy
+docker compose run --rm t212-sync-buddy
 ```
 
 > [!NOTE]
@@ -217,7 +217,7 @@ python3 t212_fetch.py
 
 ```bash
 cd T212-Sync-buddy
-docker compose run --rm T212-Sync-buddy
+docker compose run --rm t212-sync-buddy
 ```
 
 </details>
@@ -268,20 +268,20 @@ If you use the Docker Compose setup (Section 3, Option B), use these systemd uni
 
 1.  **Copy the Docker unit files**:
     ```bash
-    sudo cp systemdunits/T212-Sync-buddy-sync-docker.service /etc/systemd/system/
-    sudo cp systemdunits/T212-Sync-buddy-sync-docker.timer /etc/systemd/system/
+    sudo cp systemdunits/t212-sync-buddy-docker.service /etc/systemd/system/
+    sudo cp systemdunits/t212-sync-buddy-docker.timer /etc/systemd/system/
     ```
 
 2.  **Configure the service**:
     ```bash
-    sudo nano /etc/systemd/system/T212-Sync-buddy-sync-docker.service
+    sudo nano /etc/systemd/system/t212-sync-buddy-docker.service
     ```
     Update `User`, `WorkingDirectory`, and `HOST_SCRIPTS_DIR` to match your actual installation path.
 
 3.  **Enable and start**:
     ```bash
     sudo systemctl daemon-reload
-    sudo systemctl enable --now T212-Sync-buddy-sync-docker.timer
+    sudo systemctl enable --now t212-sync-buddy-docker.timer
     ```
 
 > [!TIP]
@@ -335,22 +335,22 @@ journalctl -u T212-Sync-buddy.service -n 50 --since "yesterday"
 #### Verify the Timer
 ```bash
 # Check if the timer is active
-systemctl status T212-Sync-buddy-sync-docker.timer
+systemctl status t212-sync-buddy-docker.timer
 
 # View next scheduled run
-systemctl list-timers T212-Sync-buddy-sync-docker.timer
+systemctl list-timers t212-sync-buddy-docker.timer
 
 # Manually trigger a run now to test
-sudo systemctl start T212-Sync-buddy-sync-docker.service
+sudo systemctl start t212-sync-buddy-docker.service
 
 # View latest logs
-journalctl -u T212-Sync-buddy-sync-docker.service -n 50 --since "yesterday"
+journalctl -u t212-sync-buddy-docker.service -n 50 --since "yesterday"
 ```
 
 #### Routine Maintenance
 - **Force a full re-import**: If you need to rebuild your history from scratch, first remove the existing activities for that account in Ghostfolio, then run with `--force-initial-sync` (this wipes `out/`, `input/`, `.state/`, `temp/`, `cache/`):
   ```bash
-  docker compose run --rm T212-Sync-buddy python3 t212_fetch.py --force-initial-sync
+  docker compose run --rm t212-sync-buddy python3 t212_fetch.py --force-initial-sync
   ```
 - **Manual Cleanup**: To quickly reset your local data without running the fetcher:
   ```bash
@@ -362,11 +362,11 @@ journalctl -u T212-Sync-buddy-sync-docker.service -n 50 --since "yesterday"
   ```
 - **View container logs** (if running interactively):
   ```bash
-  docker compose logs T212-Sync-buddy
+  docker compose logs t212-sync-buddy
   ```
 - **Temporary Disable**: 
   ```bash
-  sudo systemctl stop T212-Sync-buddy-sync-docker.timer
+  sudo systemctl stop t212-sync-buddy-docker.timer
   ```
 
 </details>
