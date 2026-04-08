@@ -430,32 +430,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Trading212 → Ghostfolio Data Fetcher"
     )
-    parser.add_argument(
-        "--force-initial-sync",
-        action="store_true",
-        help="Wipe all data (out/, input/, .state/, temp/, cache/) and perform a full re-import from scratch.",
-    )
     return parser.parse_args(argv)
-
-
-def force_initial_sync():
-    """Deletes out/, input/, .state/, temp/, and cache/ directories for a clean re-import."""
-    dirs_to_wipe = [
-        _data_dir / "out",
-        _data_dir / "input",
-        _data_dir / ".state",
-        _data_dir / "temp",
-        _data_dir / "cache",
-    ]
-    print("⚠️  --force-initial-sync: wiping all data directories...")
-    for d in dirs_to_wipe:
-        if d.exists():
-            shutil.rmtree(d)
-            print(f"  🗑️  Deleted {d}")
-    # Re-create required directories
-    os.makedirs(STATE_DIR, exist_ok=True)
-    os.makedirs(INPUT_DIR, exist_ok=True)
-    print("  ✅ Clean slate ready.\n")
 
 
 def main():
@@ -465,9 +440,6 @@ def main():
     hands off CSVs to run-all.sh for Ghostfolio import, and persists state only
     for successfully verified accounts.
     """
-    args = parse_args()
-    if args.force_initial_sync:
-        force_initial_sync()
     accounts = load_accounts()
     print(f"Found {len(accounts)} configured account(s): {[a['prefix'].upper() for a in accounts]}")
 

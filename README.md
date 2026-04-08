@@ -313,11 +313,6 @@ journalctl -u t212-sync-buddy.service -n 50 --since "yesterday"
 ```
 
 #### Routine Maintenance
-- **Force a full re-import**: If you need to rebuild your history from scratch, first remove the existing activities for that account in Ghostfolio, then run with `--force-initial-sync` (this wipes `out/`, `input/`, `.state/`, `temp/`, `cache/`):
-  ```bash
-  source venv/bin/activate
-  python3 t212_fetch.py --force-initial-sync
-  ```
 - **Manual Cleanup**: To quickly reset your local data without running the fetcher:
   ```bash
   rm -rf out/ input/ .state/ temp/ cache/
@@ -348,10 +343,6 @@ journalctl -u t212-sync-buddy-docker.service -n 50 --since "yesterday"
 ```
 
 #### Routine Maintenance
-- **Force a full re-import**: If you need to rebuild your history from scratch, first remove the existing activities for that account in Ghostfolio, then run with `--force-initial-sync` (this wipes `out/`, `input/`, `.state/`, `temp/`, `cache/`):
-  ```bash
-  docker compose run --rm t212-sync-buddy python3 t212_fetch.py --force-initial-sync
-  ```
 - **Manual Cleanup**: To quickly reset your local data without running the fetcher:
   ```bash
   rm -rf out/ input/ .state/ temp/ cache/
