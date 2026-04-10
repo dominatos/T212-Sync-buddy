@@ -22,7 +22,7 @@ sudo apt install docker.io jq gawk python3-full
 
 If you like this project, consider supporting me:
 
-[![Buy Me A Coffee](https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png)](https://www.buymeacoffee.com/dominatos)
+<a href="https://www.buymeacoffee.com/dominatos"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="40"></a>
 
 ---
 ---
@@ -396,6 +396,6 @@ This robust automation and synchronization pipeline is powered by the excellent 
 
 If you like this project, consider supporting me:
 
-[![Buy Me A Coffee](https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png)](https://www.buymeacoffee.com/dominatos)
+<a href="https://www.buymeacoffee.com/dominatos"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="40"></a>
 
 ---
