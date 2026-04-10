@@ -17,7 +17,14 @@ gawk --version
 # Install missing dependencies if needed
 sudo apt install docker.io jq gawk python3-full
 ```
+---
 
+
+If you like this project, consider supporting me:
+
+[![Buy Me A Coffee](https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png)](https://www.buymeacoffee.com/dominatos)
+
+---
 ---
 
 ## 1. Project Structure
@@ -384,3 +391,11 @@ journalctl -u t212-sync-buddy-docker.service -n 50 --since "yesterday"
 ## Acknowledgments
 
 This robust automation and synchronization pipeline is powered by the excellent CSV-to-JSON parsing engine provided by [dickwolff/Export-To-Ghostfolio](https://github.com/dickwolff/Export-To-Ghostfolio). Data extraction via API, orchestration, normalization, and scheduling are maintained within this project.
+---
+
+
+If you like this project, consider supporting me:
+
+[![Buy Me A Coffee](https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png)](https://www.buymeacoffee.com/dominatos)
+
+---
