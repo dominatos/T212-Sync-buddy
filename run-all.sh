@@ -307,6 +307,9 @@ process_account() {
         log_trace "  Running: python3 investbrain_import.py \"temp/$csv_name\" \"***\" --validate-only"
         python3 investbrain_import.py "temp/$csv_name" "$account_id" --validate-only || {
           log_error "Validation failed for $csv_name"
+          mkdir -p "input/quarantine"
+          mv "$csv_file" "input/quarantine/"
+          log_error "🚫 Quarantined $csv_name → input/quarantine/ (Investbrain validation failed)"
           had_failure=1
           continue
         }
@@ -322,6 +325,9 @@ process_account() {
         log_trace "    T212_ENV_FILE=$T212_ENV_FILE"
         python3 investbrain_import.py "temp/$csv_name" "$account_id" || {
           log_error "Import failed for $csv_name"
+          mkdir -p "input/quarantine"
+          mv "$csv_file" "input/quarantine/"
+          log_error "🚫 Quarantined $csv_name → input/quarantine/ (Investbrain import failed)"
           had_failure=1
           continue
         }

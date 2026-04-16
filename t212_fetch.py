@@ -32,7 +32,7 @@ _LOG_LEVEL = _LOG_LEVEL_NAMES.get(os.getenv("T212_LOG_LEVEL", "INFO").upper(), 2
 
 def _log(level: int, tag: str, msg: str):
     if _LOG_LEVEL <= level:
-        print(f"[{tag}] {msg}")
+        print(f"[{tag}] {msg}", flush=True)
 
 def trace(msg: str): _log(0, "TRACE", msg)
 def debug(msg: str): _log(1, "DEBUG", msg)
@@ -45,10 +45,10 @@ def fatal(msg: str): _log(5, "FATAL", msg)
 def countdown_sleep(seconds):
     for i in range(seconds, 0, -1):
         if _LOG_LEVEL <= 0:  # TRACE only
-            print(f"Sleeping {i}s...", end='\r')
+            print(f"Sleeping {i}s...", end='\r', flush=True)
         time.sleep(1)
     if _LOG_LEVEL <= 0:
-        print("Sleeping 0s... Done.")
+        print("Sleeping 0s... Done.", flush=True)
 
 # --- CONFIGURATION ---
 _script_dir = Path(__file__).resolve().parent
@@ -86,7 +86,7 @@ def has_investbrain_accounts() -> bool:
     Checks if any Investbrain accounts are configured in .env.
     Returns True if at least one PREFIX_INVESTBRAIN_PORTFOLIO_ID is found.
     """
-    trace("Checking for Investbrain accounts...")
+    debug("Checking for Investbrain accounts...")
     investbrain_vars = []
     investbrain_found = False
     
@@ -116,13 +116,13 @@ def load_accounts() -> list[dict]:
     seen_prefixes = []  # Guard against duplicate env-var casing (e.g. ISA vs isa)
     missing_platform_ids = []  # Collect prefixes missing both platform account IDs
 
-    trace("Scanning environment variables for API credentials...")
+    debug("Scanning environment variables for API credentials...")
     for key in os.environ:
         if key.endswith("_API_KEY"):
             prefix = key[: -len("_API_KEY")]       # strip suffix → "ISA", "CFD", etc.
             secret_key = f"{prefix}_API_SECRET"     # derive the companion secret var
             prefix_lower = prefix.lower()
-            trace(f"Found API_KEY: {key}, prefix={prefix}, secret_key={secret_key}")
+            debug(f"Found API_KEY: {key}, prefix={prefix}, secret_key={secret_key}")
 
             if prefix_lower in seen_prefixes:        # skip case-insensitive duplicates
                 trace(f"Skipping duplicate prefix: {prefix_lower}")
@@ -139,7 +139,7 @@ def load_accounts() -> list[dict]:
                     seen_prefixes.append(prefix_lower)
                     continue
                     
-                trace(f"Adding account {prefix}")
+                debug(f"Adding account {prefix}")
                 accounts.append({
                     "prefix": prefix_lower,
                     "api_key": os.getenv(key),
@@ -363,7 +363,7 @@ def wait_for_export(headers: dict, report_id: int, timeout: int = 600) -> str:
                 if exp["status"] == "Finished":
                     info(f"Report {report_id} ready!")
                     return exp["downloadLink"]
-        trace(f"Report {report_id} still pending, polling again...")
+        debug(f"Report {report_id} still pending, polling again...")
         countdown_sleep(61)  # T212 exports-status endpoint is hard-capped at 1 req/min
     raise TimeoutError(f"Report {report_id} not ready after {timeout}s")
 
@@ -536,7 +536,7 @@ def main():
     hands off CSVs to run-all.sh for Ghostfolio/Investbrain import, and persists state only
     for successfully verified accounts.
     """
-    trace("======== MAIN EXECUTION STARTED ========")
+    info("======== MAIN EXECUTION STARTED ========")
     debug(f"Current working directory: {os.getcwd()}")
     trace(f"Environment variables count: {len(os.environ)}")
     

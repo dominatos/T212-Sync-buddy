@@ -3,6 +3,7 @@ FROM docker:27-cli AS docker-cli
 
 # Stage 2: Build the fetcher image
 FROM python:3.12-slim
+ENV PYTHONUNBUFFERED=1
 
 # Install bash tools needed by run-all.sh
 RUN apt-get update && \

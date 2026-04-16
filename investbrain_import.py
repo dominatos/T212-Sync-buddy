@@ -145,6 +145,16 @@ def parse_csv_row(row: dict) -> dict:
     currency = row.get('Currency (Price / share)', row.get('Currency', 'USD')).strip()
     if not currency:
         currency = 'USD'
+        
+    # Investbrain uses Yahoo Finance which expects GBP, not GBX (pence).
+    # Convert pence to pounds for correct cost basis/sales price.
+    if currency == 'GBX' or currency == 'GBp':
+        currency = 'GBP'
+        price = price / 100.0
+        
+    # LSE stocks in Yahoo Finance require a .L suffix.
+    if currency == 'GBP' and '.' not in symbol:
+        symbol = f"{symbol}.L"
 
     # Build transaction data
     transaction = {
