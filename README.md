@@ -437,6 +437,28 @@ journalctl -u t212-sync-buddy-docker.service -n 50 --since "yesterday"
 <details>
 <summary><h2>Troubleshooting</h2></summary>
 
+### Log Levels
+
+Control log verbosity with the `T212_LOG_LEVEL` environment variable:
+
+| Level | Output | Use Case |
+| :--- | :--- | :--- |
+| `TRACE` | Everything (per-second countdowns, per-variable dumps) | Deep debugging |
+| `DEBUG` | Diagnostics (HTTP requests, config summaries, state saves) | Troubleshooting issues |
+| **`INFO`** | Operational progress (default) | Production / daily cron |
+| `WARN` | Non-fatal problems (rate limits, skipped files) | Quiet monitoring |
+| `ERROR` | Failed operations only | Minimal output |
+| `FATAL` | Unrecoverable exits only | Silent except on crash |
+
+Set in `.env` or inline:
+```bash
+# In .env
+T212_LOG_LEVEL=DEBUG
+
+# Or inline for a single run
+T212_LOG_LEVEL=TRACE python3 t212_fetch.py
+```
+
 | Problem | Solution |
 | :--- | :--- |
 | `No accounts found in .env` | Ensure your `.env` variables use the correct `PREFIX_API_KEY` format. |
@@ -446,6 +468,8 @@ journalctl -u t212-sync-buddy-docker.service -n 50 --since "yesterday"
 | Timer not running | Inspect logs for path or permission errors: `journalctl -u t212-sync-buddy.service`. |
 | `docker: command not found` (inside container) | Rebuild the image: `docker compose build --no-cache`. Ensure the Dockerfile uses multi-stage `COPY --from=docker-cli`. |
 | `HOST_SCRIPTS_DIR` warning | Set `HOST_SCRIPTS_DIR` in `.env` to the absolute host path of the `T212-Sync-buddy` directory. |
+| Too much log output | Set `T212_LOG_LEVEL=WARN` in `.env` to see only warnings and errors. |
+| Need more detail for debugging | Set `T212_LOG_LEVEL=TRACE` in `.env` for maximum verbosity. |
 
 </details>
 

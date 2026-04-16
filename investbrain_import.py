@@ -24,18 +24,32 @@ from dotenv import load_dotenv
 # Load environment variables
 _script_dir = Path(__file__).resolve().parent
 _env_file = os.getenv("T212_ENV_FILE", str(_script_dir / ".env"))
-print(f"[DEBUG] Loading .env from: {_env_file}")
-print(f"[DEBUG] .env exists: {os.path.exists(_env_file)}")
+
+# --- LOG LEVEL ---
+_LOG_LEVEL_NAMES = {"TRACE": 0, "DEBUG": 1, "INFO": 2, "WARN": 3, "ERROR": 4, "FATAL": 5}
+_LOG_LEVEL = _LOG_LEVEL_NAMES.get(os.getenv("T212_LOG_LEVEL", "INFO").upper(), 2)
+
+def _log(level: int, tag: str, msg: str):
+    if _LOG_LEVEL <= level:
+        print(f"[{tag}] {msg}")
+
+def trace(msg: str): _log(0, "TRACE", msg)
+def debug(msg: str): _log(1, "DEBUG", msg)
+def info(msg: str):  _log(2, "INFO", msg)
+def warn(msg: str):  _log(3, "WARN", msg)
+def error(msg: str): _log(4, "ERROR", msg)
+def fatal(msg: str): _log(5, "FATAL", msg)
+
+debug(f"Loading .env from: {_env_file}")
+trace(f".env exists: {os.path.exists(_env_file)}")
 load_dotenv(dotenv_path=_env_file)
 
-# Debug: Show environment variables
-print(f"[DEBUG] Environment variables after load_dotenv:")
+# Debug: Show environment variables (mask secrets)
 for key in os.environ:
     if 'INVESTBRAIN' in key.upper() or 'T212' in key.upper():
-        # Mask sensitive values
-        value = os.environ[key]
-        masked = f"{value[:20]}...{value[-5:]}" if len(value) > 30 else value
-        print(f"[DEBUG]   {key}={masked}")
+        is_secret = any(s in key.upper() for s in ['TOKEN', 'SECRET', 'KEY', 'PASSWORD'])
+        value = '***' if is_secret else os.environ[key]
+        trace(f"  {key}={value}")
 
 REQUEST_TIMEOUT = (30, 200)  # (connect_timeout, read_timeout)
 
@@ -43,18 +57,13 @@ def get_investbrain_headers(api_token: str) -> dict:
     """Creates Bearer token headers for Investbrain API requests."""
     # Strip whitespace from token - critical for .env file loading
     api_token = api_token.strip() if api_token else ""
-    print(f"[DEBUG] Creating headers with token:")
-    print(f"[DEBUG]   Token length: {len(api_token)} chars")
-    print(f"[DEBUG]   Token first 20 chars: {api_token[:20]}...")
-    print(f"[DEBUG]   Token last 5 chars: ...{api_token[-5:]}")
-    print(f"[DEBUG]   Token repr (shows whitespace): {repr(api_token[:30])}...{repr(api_token[-10:])}")
-    print(f"[DEBUG]   Authorization header: Bearer {api_token[:20]}...{api_token[-5:]}")
+    trace(f"Creating headers with token: set (length={len(api_token)})")
     headers = {
         "Authorization": f"Bearer {api_token}",
         "Content-Type": "application/json",
         "Accept": "application/json"
     }
-    print(f"[DEBUG] Headers created: {list(headers.keys())}")
+    trace(f"Headers created: {list(headers.keys())}")
     return headers
 
 def map_transaction_type(action: str) -> str:
@@ -103,7 +112,7 @@ def parse_csv_row(row: dict) -> dict:
                 print(f"  ⚠️  Could not parse date: {time_str}")
                 return None
     except Exception as e:
-        print(f"  ⚠️  Error parsing date '{time_str}': {e}")
+        warn(f"Error parsing date '{time_str}': {e}")
         return None
 
     date = date_obj.strftime('%Y-%m-%d')
@@ -113,7 +122,7 @@ def parse_csv_row(row: dict) -> dict:
     if not symbol:
         symbol = row.get('ISIN', '').strip()
     if not symbol:
-        print(f"  ⚠️  No symbol found for row: {row}")
+        warn(f"No symbol found for row: {row}")
         return None
 
     # Quantity
@@ -121,7 +130,7 @@ def parse_csv_row(row: dict) -> dict:
     try:
         quantity = float(quantity_str)
     except (ValueError, TypeError):
-        print(f"  ⚠️  Invalid quantity '{quantity_str}' for symbol {symbol}")
+        warn(f"Invalid quantity '{quantity_str}' for symbol {symbol}")
         return None
 
     # Price per share
@@ -129,7 +138,7 @@ def parse_csv_row(row: dict) -> dict:
     try:
         price = float(price_str)
     except (ValueError, TypeError):
-        print(f"  ⚠️  Invalid price '{price_str}' for symbol {symbol}")
+        warn(f"Invalid price '{price_str}' for symbol {symbol}")
         return None
 
     # Currency - use the currency from "Currency (Price / share)" or fallback
@@ -159,13 +168,13 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
     Imports transactions from CSV to Investbrain.
     Returns (success_count, error_count)
     """
-    print(f"  📄 Processing CSV: {csv_path}")
-    print(f"[DEBUG] import_to_investbrain called with:")
-    print(f"[DEBUG]   csv_path={csv_path}")
-    print(f"[DEBUG]   portfolio_id={portfolio_id}")
-    print(f"[DEBUG]   api_url={api_url}")
-    print(f"[DEBUG]   api_token length={len(api_token)}")
-    print(f"[DEBUG]   validate_only={validate_only}")
+    info(f"Processing CSV: {csv_path}")
+    trace(f"import_to_investbrain called with:")
+    trace(f"  csv_path={csv_path}")
+    trace(f"  portfolio_id=***")
+    trace(f"  api_url={api_url}")
+    trace(f"  api_token: set (length={len(api_token)})")
+    trace(f"  validate_only={validate_only}")
 
     headers = get_investbrain_headers(api_token)
     success_count = 0
@@ -187,7 +196,7 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                 has_header = True
             
             reader = csv.DictReader(f, dialect=dialect)
-            print(f"[DEBUG] CSV reader created, dialect detected")
+            trace("CSV reader created, dialect detected")
 
             for row_num, row in enumerate(reader, 1):
 
@@ -199,45 +208,34 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                 transaction['portfolio_id'] = portfolio_id
 
                 if validate_only:
-                    print(f"  ✅ [VALIDATE] Would import: {transaction}")
+                    info(f"[VALIDATE] Would import: {transaction}")
                     success_count += 1
                     continue
 
                 # Send to Investbrain API
                 try:
                     url = f"{api_url.rstrip('/')}/api/transaction"
-                    print(f"[DEBUG] Importing transaction {row_num}:")
-                    print(f"[DEBUG]   URL: {url}")
-                    print(f"[DEBUG]   Transaction data: {transaction}")
-                    print(f"[DEBUG]   Headers being sent:")
-                    for key, value in headers.items():
-                        if key == 'Authorization':
-                            masked = f"{value[:30]}...{value[-10:]}"
-                            print(f"[DEBUG]     {key}: {masked}")
-                        else:
-                            print(f"[DEBUG]     {key}: {value}")
-                    
+                    trace(f"POST transaction {row_num}: {transaction.get('symbol')} {transaction.get('transaction_type')}")
+
                     response = requests.post(url, json=transaction, headers=headers, timeout=REQUEST_TIMEOUT)
-                    print(f"[DEBUG]   Response status: {response.status_code}")
-                    print(f"[DEBUG]   Response headers: {dict(response.headers)}")
-                    print(f"[DEBUG]   Response body: {response.text[:500]}")
+                    trace(f"  Response: {response.status_code}")
 
                     if response.status_code in [200, 201]:
-                        print(f"  ✅ Imported: {transaction['symbol']} {transaction['transaction_type']} {transaction['quantity']} @ {transaction.get('cost_basis', transaction.get('sale_price'))} {transaction['currency']}")
+                        info(f"Imported: {transaction['symbol']} {transaction['transaction_type']} {transaction['quantity']} @ {transaction.get('cost_basis', transaction.get('sale_price'))} {transaction['currency']}")
                         success_count += 1
                     else:
-                        print(f"  ❌ Failed to import row {row_num}: HTTP {response.status_code} - {response.text}")
+                        error(f"Failed to import row {row_num}: HTTP {response.status_code} - {response.text}")
                         error_count += 1
 
                 except requests.RequestException as e:
-                    print(f"  ❌ Network error importing row {row_num}: {e}")
+                    error(f"Network error importing row {row_num}: {e}")
                     error_count += 1
 
     except FileNotFoundError:
-        print(f"  ❌ CSV file not found: {csv_path}")
+        error(f"CSV file not found: {csv_path}")
         return 0, 1
     except Exception as e:
-        print(f"  ❌ Error processing CSV: {e}")
+        error(f"Error processing CSV: {e}")
         return 0, 1
 
     return success_count, error_count
@@ -256,28 +254,27 @@ def main():
     if args.api_token:
         args.api_token = args.api_token.strip()
     
-    print(f"[DEBUG] main() called with arguments:")
-    print(f"[DEBUG]   csv_file={args.csv_file}")
-    print(f"[DEBUG]   portfolio_id={args.portfolio_id}")
-    print(f"[DEBUG]   validate_only={args.validate_only}")
-    print(f"[DEBUG]   api_url={args.api_url}")
-    print(f"[DEBUG]   api_token (from args)={args.api_token[:20] if args.api_token else 'None'}...")
-    print(f"[DEBUG]   api_token repr: {repr(args.api_token[:30]) if args.api_token else 'None'}...")
+    trace("main() called with arguments:")
+    trace(f"  csv_file={args.csv_file}")
+    trace(f"  portfolio_id=***")
+    trace(f"  validate_only={args.validate_only}")
+    trace(f"  api_url={args.api_url}")
+    trace(f"  api_token: {'set' if args.api_token else 'None'} (length={len(args.api_token) if args.api_token else 0})")
 
     if not args.api_url:
-        print("❌ INVESTBRAIN_URL not set in environment or --api-url")
-        print(f"[DEBUG] INVESTBRAIN_URL from os.getenv: {os.getenv('INVESTBRAIN_URL')}")
+        fatal("INVESTBRAIN_URL not set in environment or --api-url")
+        trace(f"INVESTBRAIN_URL from os.getenv: {os.getenv('INVESTBRAIN_URL')}")
         return 1
 
     if not args.api_token:
-        print("❌ INVESTBRAIN_API_TOKEN not set in environment or --api-token")
-        print(f"[DEBUG] INVESTBRAIN_API_TOKEN from os.getenv: {os.getenv('INVESTBRAIN_API_TOKEN')[:20] if os.getenv('INVESTBRAIN_API_TOKEN') else 'None'}...")
+        fatal("INVESTBRAIN_API_TOKEN not set in environment or --api-token")
+        trace(f"INVESTBRAIN_API_TOKEN from os.getenv: {'set' if os.getenv('INVESTBRAIN_API_TOKEN') else 'None'}")
         return 1
 
-    print(f"🔄 Investbrain Import {'(VALIDATE ONLY)' if args.validate_only else ''}")
-    print(f"  API URL: {args.api_url}")
-    print(f"  Portfolio ID: {args.portfolio_id}")
-    print(f"[DEBUG] API Token loaded: {bool(args.api_token)} (length: {len(args.api_token) if args.api_token else 0})")
+    info(f"Investbrain Import {'(VALIDATE ONLY)' if args.validate_only else ''}")
+    info(f"  API URL: {args.api_url}")
+    debug(f"  Portfolio ID: ***")
+    trace(f"  API Token: set (length={len(args.api_token) if args.api_token else 0})")
 
     success_count, error_count = import_to_investbrain(
         args.csv_file,
@@ -287,7 +284,7 @@ def main():
         args.validate_only
     )
 
-    print(f"\n📊 Results: {success_count} successful, {error_count} errors")
+    info(f"Results: {success_count} successful, {error_count} errors")
 
     if error_count > 0:
         return 1

@@ -26,21 +26,38 @@ from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 
+# --- LOG LEVEL ---
+_LOG_LEVEL_NAMES = {"TRACE": 0, "DEBUG": 1, "INFO": 2, "WARN": 3, "ERROR": 4, "FATAL": 5}
+_LOG_LEVEL = _LOG_LEVEL_NAMES.get(os.getenv("T212_LOG_LEVEL", "INFO").upper(), 2)
+
+def _log(level: int, tag: str, msg: str):
+    if _LOG_LEVEL <= level:
+        print(f"[{tag}] {msg}")
+
+def trace(msg: str): _log(0, "TRACE", msg)
+def debug(msg: str): _log(1, "DEBUG", msg)
+def info(msg: str):  _log(2, "INFO", msg)
+def warn(msg: str):  _log(3, "WARN", msg)
+def error(msg: str): _log(4, "ERROR", msg)
+def fatal(msg: str): _log(5, "FATAL", msg)
+
 # Countdown sleep function
 def countdown_sleep(seconds):
     for i in range(seconds, 0, -1):
-        print(f"Sleeping {i}s...", end='\r')
+        if _LOG_LEVEL <= 0:  # TRACE only
+            print(f"Sleeping {i}s...", end='\r')
         time.sleep(1)
-    print("Sleeping 0s... Done.")
+    if _LOG_LEVEL <= 0:
+        print("Sleeping 0s... Done.")
 
 # --- CONFIGURATION ---
 _script_dir = Path(__file__).resolve().parent
 
 # Configurable .env path: set T212_ENV_FILE to override (default: .env)
 _env_file = os.getenv("T212_ENV_FILE", str(_script_dir / ".env"))
-print(f"[DEBUG] Loading .env from: {_env_file}")
+debug(f"Loading .env from: {_env_file}")
 load_dotenv(dotenv_path=_env_file)
-print(f"[DEBUG] .env file exists: {os.path.exists(_env_file)}")
+trace(f".env file exists: {os.path.exists(_env_file)}")
 
 # Configurable data root: set T212_DATA_DIR to override (default: ./)
 _data_dir = Path(os.getenv("T212_DATA_DIR", str(_script_dir)))
@@ -69,24 +86,24 @@ def has_investbrain_accounts() -> bool:
     Checks if any Investbrain accounts are configured in .env.
     Returns True if at least one PREFIX_INVESTBRAIN_PORTFOLIO_ID is found.
     """
-    print(f"[DEBUG] Checking for Investbrain accounts...")
+    trace("Checking for Investbrain accounts...")
     investbrain_vars = []
     investbrain_found = False
     
     # First, list ALL environment variables with "INVESTBRAIN" in the name
     all_ib_vars = [key for key in os.environ if "INVESTBRAIN" in key]
-    print(f"[DEBUG] All INVESTBRAIN-related env vars: {all_ib_vars}")
+    trace(f"All INVESTBRAIN-related env vars: {all_ib_vars}")
     
     for key in os.environ:
         if key.endswith("_INVESTBRAIN_PORTFOLIO_ID"):
             portfolio_id = os.getenv(key)
-            investbrain_vars.append(f"{key}={portfolio_id}")
-            print(f"[DEBUG] Found Investbrain var: {key} = {portfolio_id}")
+            investbrain_vars.append(f"{key}=***")
+            trace(f"Found Investbrain var: {key} = ***")
             if portfolio_id and portfolio_id.strip():
                 investbrain_found = True
     
-    print(f"[DEBUG] Investbrain portfolio vars found: {investbrain_vars}")
-    print(f"[DEBUG] has_investbrain_accounts returning: {investbrain_found}")
+    trace(f"Investbrain portfolio vars found: {investbrain_vars}")
+    trace(f"has_investbrain_accounts returning: {investbrain_found}")
     return investbrain_found
 
 
@@ -99,30 +116,30 @@ def load_accounts() -> list[dict]:
     seen_prefixes = []  # Guard against duplicate env-var casing (e.g. ISA vs isa)
     missing_platform_ids = []  # Collect prefixes missing both platform account IDs
 
-    print(f"[DEBUG] Scanning environment variables for API credentials...")
+    trace("Scanning environment variables for API credentials...")
     for key in os.environ:
         if key.endswith("_API_KEY"):
             prefix = key[: -len("_API_KEY")]       # strip suffix → "ISA", "CFD", etc.
             secret_key = f"{prefix}_API_SECRET"     # derive the companion secret var
             prefix_lower = prefix.lower()
-            print(f"[DEBUG] Found API_KEY: {key}, prefix={prefix}, secret_key={secret_key}")
+            trace(f"Found API_KEY: {key}, prefix={prefix}, secret_key={secret_key}")
 
             if prefix_lower in seen_prefixes:        # skip case-insensitive duplicates
-                print(f"[DEBUG] Skipping duplicate prefix: {prefix_lower}")
+                trace(f"Skipping duplicate prefix: {prefix_lower}")
                 continue
             if os.getenv(secret_key):                # only add if both key+secret exist
                 gf_account_id = os.getenv(f"{prefix}_GHOSTFOLIO_ACCOUNT_ID")
                 ib_portfolio_id = os.getenv(f"{prefix}_INVESTBRAIN_PORTFOLIO_ID")
-                print(f"[DEBUG] {prefix}: GF={gf_account_id}, IB={ib_portfolio_id}")
+                debug(f"{prefix}: GF={'***' if gf_account_id else 'None'}, IB={'***' if ib_portfolio_id else 'None'}")
                 
                 # Accept account if it has either Ghostfolio OR Investbrain configuration
                 if not gf_account_id and not ib_portfolio_id:
-                    print(f"[DEBUG] Skipping {prefix}: no Ghostfolio or Investbrain account configured")
+                    debug(f"Skipping {prefix}: no Ghostfolio or Investbrain account configured")
                     missing_platform_ids.append(prefix)
                     seen_prefixes.append(prefix_lower)
                     continue
                     
-                print(f"[DEBUG] Adding account {prefix}")
+                trace(f"Adding account {prefix}")
                 accounts.append({
                     "prefix": prefix_lower,
                     "api_key": os.getenv(key),
@@ -133,14 +150,16 @@ def load_accounts() -> list[dict]:
                 })
                 seen_prefixes.append(prefix_lower)
             else:
-                print(f"[DEBUG] Skipping {prefix}: no API_SECRET found")
+                warn(f"Skipping {prefix}: no API_SECRET found")
 
     if missing_platform_ids:
         missing = ", ".join(f"{p}_GHOSTFOLIO_ACCOUNT_ID or {p}_INVESTBRAIN_PORTFOLIO_ID" for p in missing_platform_ids)
-        raise SystemExit(f"❌ Missing platform account IDs in .env: {missing}")
+        fatal(f"Missing platform account IDs in .env: {missing}")
+        raise SystemExit(1)
 
     if not accounts:
-        raise SystemExit("❌ No accounts found in .env. Expected format: PREFIX_API_KEY / PREFIX_API_SECRET / PREFIX_GHOSTFOLIO_ACCOUNT_ID or PREFIX_INVESTBRAIN_PORTFOLIO_ID")
+        fatal("No accounts found in .env. Expected format: PREFIX_API_KEY / PREFIX_API_SECRET / PREFIX_GHOSTFOLIO_ACCOUNT_ID or PREFIX_INVESTBRAIN_PORTFOLIO_ID")
+        raise SystemExit(1)
 
     return accounts
 
@@ -169,7 +188,7 @@ def safe_parse_remaining(header_value: str | None, default: int = 1) -> int:
     try:
         return int(header_value)
     except (ValueError, TypeError):
-        print(f"  ⚠️  Malformed x-ratelimit-remaining header: {header_value!r}, defaulting to {default}")
+        warn(f"Malformed x-ratelimit-remaining header: {header_value!r}, defaulting to {default}")
         return default
 
 
@@ -210,9 +229,9 @@ def safe_get(url: str, headers: dict, max_retries: int = MAX_429_RETRIES) -> req
     """Wrapper for GET requests that handles 429 Rate Limiting with a retry cap."""
     retries = 0
     while True:
-        print(f"  [GET] {url}")
+        debug(f"[GET] {url}")
         resp = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
-        print(f"  [RESP] {resp.status_code}")
+        debug(f"[RESP] {resp.status_code}")
         if resp.status_code == 429:
             retries += 1
             if retries > max_retries:
@@ -222,7 +241,7 @@ def safe_get(url: str, headers: dict, max_retries: int = MAX_429_RETRIES) -> req
             parsed = safe_parse_reset(resp.headers.get("x-ratelimit-reset"))
             # Wait until the reset window, minimum 10s to avoid tight loops; 60s fallback if missing/malformed
             wait = max(10, parsed - int(time.time()) + 1) if parsed is not None else 60
-            print(f"  [RATE LIMIT] retry {retries}/{max_retries}, waiting {wait}s...")
+            warn(f"[RATE LIMIT] retry {retries}/{max_retries}, waiting {wait}s...")
             countdown_sleep(wait)
             continue  # retry the exact same request
         resp.raise_for_status()
@@ -233,9 +252,9 @@ def safe_post(url: str, headers: dict, json_body: dict, max_retries: int = MAX_4
     """Wrapper for POST requests that handles 429 Rate Limiting with a retry cap."""
     retries = 0
     while True:
-        print(f"  [POST] {url}")
+        debug(f"[POST] {url}")
         resp = requests.post(url, headers=headers, json=json_body, timeout=REQUEST_TIMEOUT)
-        print(f"  [RESP] {resp.status_code}")
+        debug(f"[RESP] {resp.status_code}")
         if resp.status_code == 429:
             retries += 1
             if retries > max_retries:
@@ -244,7 +263,7 @@ def safe_post(url: str, headers: dict, json_body: dict, max_retries: int = MAX_4
                 )
             parsed = safe_parse_reset(resp.headers.get("x-ratelimit-reset"))
             wait = max(10, parsed - int(time.time()) + 1) if parsed is not None else 60
-            print(f"  [RATE LIMIT] retry {retries}/{max_retries}, waiting {wait}s...")
+            warn(f"[RATE LIMIT] retry {retries}/{max_retries}, waiting {wait}s...")
             countdown_sleep(wait)
             continue  # retry the exact same request
         resp.raise_for_status()
@@ -275,7 +294,7 @@ def _page_earliest(headers: dict, start_url: str, extract_date) -> datetime | No
             if remaining <= 1:  # about to exhaust the rate-limit bucket
                 parsed = safe_parse_reset(resp.headers.get("x-ratelimit-reset"))
                 wait = max(10, parsed - int(time.time()) + 1) if parsed is not None else 10
-                print(f"  [RATE LIMIT] {remaining} remaining, waiting {wait}s...")
+                warn(f"[RATE LIMIT] {remaining} remaining, waiting {wait}s...")
                 countdown_sleep(wait)
             else:
                 countdown_sleep(1)  # courtesy delay between pages
@@ -287,7 +306,7 @@ def _page_earliest(headers: dict, start_url: str, extract_date) -> datetime | No
 
 def get_earliest_year(headers: dict) -> int:
     """Scans orders, dividends, and transactions to find the earliest activity date."""
-    print("  Detecting earliest activity date...")
+    info("Detecting earliest activity date...")
 
     sources = [
         ("orders",       f"{BASE_URL}/equity/history/orders?limit=50",
@@ -300,18 +319,18 @@ def get_earliest_year(headers: dict) -> int:
 
     oldest_date = None
     for label, url, extractor in sources:
-        print(f"  Scanning {label}...")
+        debug(f"Scanning {label}...")
         dt = _page_earliest(headers, url, extractor)
         if dt:
-            print(f"  Earliest {label}: {dt.strftime('%Y-%m-%d')}")
+            debug(f"Earliest {label}: {dt.strftime('%Y-%m-%d')}")
             if oldest_date is None or dt < oldest_date:
                 oldest_date = dt
 
     if oldest_date:
-        print(f"  → Overall earliest activity: {oldest_date.strftime('%Y-%m-%d')}")
+        info(f"Overall earliest activity: {oldest_date.strftime('%Y-%m-%d')}")
         return oldest_date.year
     else:
-        print("  No activity found, defaulting to current year")
+        warn("No activity found, defaulting to current year")
         return datetime.now(timezone.utc).year
 
 
@@ -328,30 +347,30 @@ def request_export(headers: dict, time_from: datetime, time_to: datetime) -> int
         "timeTo":   time_to.strftime("%Y-%m-%dT%H:%M:%SZ"),
     })
     report_id = resp.json()["reportId"]
-    print(f"  [EXPORT] reportId={report_id}")
+    debug(f"[EXPORT] reportId={report_id}")
     return report_id
 
 
 def wait_for_export(headers: dict, report_id: int, timeout: int = 600) -> str:
     """Polls the export status until it is 'Finished' and returns the download link."""
-    print(f"  Waiting for report {report_id}...", end="", flush=True)
+    info(f"Waiting for report {report_id}...")
     deadline = time.time() + timeout
     while time.time() < deadline:
         resp = safe_get(f"{BASE_URL}/equity/history/exports", headers)
         for exp in resp.json():
             if exp["reportId"] == report_id:
-                print(f" [{exp['status']}]", end="", flush=True)
+                debug(f"Report {report_id} status: {exp['status']}")
                 if exp["status"] == "Finished":
-                    print(" ready!")
+                    info(f"Report {report_id} ready!")
                     return exp["downloadLink"]
-        print(".", end="", flush=True)
+        trace(f"Report {report_id} still pending, polling again...")
         countdown_sleep(61)  # T212 exports-status endpoint is hard-capped at 1 req/min
     raise TimeoutError(f"Report {report_id} not ready after {timeout}s")
 
 
 def download_csv(url: str) -> str:
     """Downloads the CSV file from the provided Temporary URL."""
-    print("  [DOWNLOAD] Downloading export file...")
+    info("Downloading export file...")
     resp = requests.get(url, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
     return resp.text
@@ -392,7 +411,7 @@ def load_state(prefix: str) -> dict:
             with open(path, encoding="utf-8") as f:
                 return json.load(f)
         except json.JSONDecodeError:
-            print(f"  ⚠️  State file corrupted, starting fresh: {path}")
+            warn(f"State file corrupted, starting fresh: {path}")
             return {}
     return {}
 
@@ -406,7 +425,7 @@ def save_state(prefix: str, state: dict):
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp_path, path)
-    print(f"  [STATE] saved → {path}")
+    debug(f"[STATE] saved → {path}")
 
 
 def fetch_account(account: dict) -> tuple[str | None, datetime]:
@@ -419,9 +438,9 @@ def fetch_account(account: dict) -> tuple[str | None, datetime]:
     now      = datetime.now(timezone.utc)
     is_first = "last_fetch" not in state
 
-    print(f"\n{'='*50}")
-    print(f"Account: {prefix.upper()} | {'INITIAL FULL IMPORT' if is_first else 'DAILY UPDATE'}")
-    print(f"{'='*50}")
+    info(f"{'='*50}")
+    info(f"Account: {prefix.upper()} | {'INITIAL FULL IMPORT' if is_first else 'DAILY UPDATE'}")
+    info(f"{'='*50}")
 
     if is_first:
         # First run: scan all endpoints to find the oldest transaction year
@@ -451,16 +470,16 @@ def fetch_account(account: dict) -> tuple[str | None, datetime]:
         ranges.append((range_start, range_end))
         year += 1
 
-    print(f"\n  Processing {len(ranges)} timeframe range(s)...")
+    info(f"Processing {len(ranges)} timeframe range(s)...")
 
     # Fire all export requests up front; T212 generates them server-side in the background
     report_ids = []
     for i, (rf, rt) in enumerate(ranges):
-        print(f"\n  Requesting range: {rf.strftime('%Y-%m-%d')} → {rt.strftime('%Y-%m-%d')}...")
+        info(f"Requesting range: {rf.strftime('%Y-%m-%d')} → {rt.strftime('%Y-%m-%d')}...")
         report_id = request_export(headers, rf, rt)
         report_ids.append((report_id, rf, rt))
         if i < len(ranges) - 1:
-            print("  Waiting 31s (rate limit)...")
+            debug("Waiting 31s (rate limit)...")
             countdown_sleep(31)  # export-creation endpoint: max 1 req / 30s
 
     # Download each completed export and merge into a single CSV (one header line)
@@ -471,16 +490,16 @@ def fetch_account(account: dict) -> tuple[str | None, datetime]:
         csv_text = download_csv(wait_for_export(headers, report_id))
         lines = csv_text.strip().splitlines()
         if not lines:
-            print(f"  [{rf.year}] No data found for this year, skipping.")
+            info(f"[{rf.year}] No data found for this year, skipping.")
             continue
         if not header_written:
             all_lines.append(lines[0])  # keep header from the first non-empty chunk only
             header_written = True
         all_lines.extend(lines[1:])  # append data rows, skip duplicate headers
-        print(f"  [{rf.year}] Fetched {len(lines)-1} rows.")
+        info(f"[{rf.year}] Fetched {len(lines)-1} rows.")
 
     if len(all_lines) <= 1:  # header-only means zero transactions
-        print(f"  No new transactions detected for {prefix}. Skipping CSV save.")
+        info(f"No new transactions detected for {prefix}. Skipping CSV save.")
         # No CSV produced — return None csv_path but still propagate cutoff
         # so the caller can advance state without needing a verification handoff.
         return None, now
@@ -495,7 +514,7 @@ def fetch_account(account: dict) -> tuple[str | None, datetime]:
         f.write("\n".join(all_lines))
 
     total_rows = len(all_lines) - 1  # subtract header
-    print(f"\n  ✅ Successfully created export: {total_rows} rows → {csv_path}")
+    info(f"✅ Successfully created export: {total_rows} rows → {csv_path}")
     # NOTE: state is NOT persisted here — deferred until after run-all.sh completes
     # so that a failed handoff leaves bootstrap mode intact for retries
     return csv_path, now
@@ -517,30 +536,30 @@ def main():
     hands off CSVs to run-all.sh for Ghostfolio/Investbrain import, and persists state only
     for successfully verified accounts.
     """
-    print("[DEBUG] ======== MAIN EXECUTION STARTED ========")
-    print(f"[DEBUG] Current working directory: {os.getcwd()}")
-    print(f"[DEBUG] Environment variables count: {len(os.environ)}")
+    trace("======== MAIN EXECUTION STARTED ========")
+    debug(f"Current working directory: {os.getcwd()}")
+    trace(f"Environment variables count: {len(os.environ)}")
     
     accounts = load_accounts()
     has_investbrain = has_investbrain_accounts()
-    print(f"Found {len(accounts)} configured account(s): {[a['prefix'].upper() for a in accounts]}")
-    print(f"[DEBUG] has_investbrain = {has_investbrain}")
-    print(f"[DEBUG] Loaded accounts details:")
+    info(f"Found {len(accounts)} configured account(s): {[a['prefix'].upper() for a in accounts]}")
+    trace(f"has_investbrain = {has_investbrain}")
+    trace("Loaded accounts details:")
     for acc in accounts:
-        print(f"[DEBUG]   - {acc['prefix'].upper()}: GF={acc.get('ghostfolio_account_id')}, IB={acc.get('investbrain_portfolio_id')}")
+        trace(f"  - {acc['prefix'].upper()}: GF={'***' if acc.get('ghostfolio_account_id') else 'None'}, IB={'***' if acc.get('investbrain_portfolio_id') else 'None'}")
     
     if has_investbrain:
-        print("Found Investbrain accounts configured (Yahoo Finance rate limit check skipped)")
+        info("Found Investbrain accounts configured (Yahoo Finance rate limit check skipped)")
     else:
-        print("No Investbrain accounts found (Yahoo Finance rate limit check will apply)")
+        info("No Investbrain accounts found (Yahoo Finance rate limit check will apply)")
 
     # Check if Yahoo Finance is rate-limited before proceeding
     # Only skip if there are NO Investbrain accounts (i.e., only Ghostfolio accounts exist)
-    print(f"[DEBUG] Checking Yahoo rate limit... (has_investbrain={has_investbrain})")
+    trace(f"Checking Yahoo rate limit... (has_investbrain={has_investbrain})")
     if not has_investbrain and check_yahoo_rate_limit():
-        print("⚠️ Yahoo Finance is rate-limited. Skipping fetch to avoid wasting API calls.")
+        warn("Yahoo Finance is rate-limited. Skipping fetch to avoid wasting API calls.")
         raise SystemExit(1)
-    print(f"[DEBUG] Yahoo rate limit check passed or skipped")
+    trace("Yahoo rate limit check passed or skipped")
 
     # Check if Trading212 API is rate-limited before proceeding
     rate_limited_accounts = []
@@ -549,7 +568,7 @@ def main():
         if check_t212_rate_limit(headers):
             rate_limited_accounts.append(account["prefix"].upper())
     if rate_limited_accounts:
-        print(f"⚠️ Trading212 API is rate-limited for accounts: {rate_limited_accounts}. Skipping fetch.")
+        warn(f"Trading212 API is rate-limited for accounts: {rate_limited_accounts}. Skipping fetch.")
         raise SystemExit(1)
 
     # Track which accounts produced CSVs for downstream per-account success checks
@@ -566,25 +585,25 @@ def main():
                 save_state(account["prefix"], {"last_fetch": cutoff.isoformat()})
         except Exception as e:
             failed_accounts.append(account["prefix"])
-            print(f"\n❌ Account {account['prefix'].upper()} failed: {e}")
+            error(f"Account {account['prefix'].upper()} failed: {e}")
             continue
 
     if failed_accounts:
-        print(f"\n⚠️  Failed accounts: {[p.upper() for p in failed_accounts]}")
+        warn(f"Failed accounts: {[p.upper() for p in failed_accounts]}")
 
     if not accounts_with_csvs:
         if failed_accounts:
-            raise SystemExit(f"❌ All accounts failed: {[p.upper() for p in failed_accounts]}")
-        print("\n✅ No CSVs produced. Nothing to convert.")
+            fatal(f"All accounts failed: {[p.upper() for p in failed_accounts]}")
+            raise SystemExit(1)
+        info("✅ No CSVs produced. Nothing to convert.")
         return
 
-    print(f"\n✅ {len(accounts_with_csvs)} account(s) synced. Launching run-all.sh for conversion...")
+    info(f"✅ {len(accounts_with_csvs)} account(s) synced. Launching run-all.sh for conversion...")
     script_path = _data_dir / "run-all.sh"
     if not script_path.exists():
-        raise SystemExit(
-            f"❌ Expected script not found: {script_path}\n"
-            f"   Ensure run-all.sh exists at the expected path within the repo layout."
-        )
+        fatal(f"Expected script not found: {script_path}")
+        fatal("Ensure run-all.sh exists at the expected path within the repo layout.")
+        raise SystemExit(1)
 
     # Execute run-all.sh with _data_dir as cwd to ensure it finds the correct directories.
     # Do NOT use check=True — we inspect per-account results even on partial failure.
@@ -607,25 +626,27 @@ def main():
         unverified = (unverified_dir / csv_name).exists() if unverified_dir.exists() else False
 
         if remaining or quarantined or unverified:
-            print(f"  ⚠️  Skipping state update for {prefix.upper()}: "
-                  f"CSV not archived to done/: {csv_name}")
+            warn(f"Skipping state update for {prefix.upper()}: "
+                 f"CSV not archived to done/: {csv_name}")
         else:
             save_state(prefix, {"last_fetch": cutoff.isoformat()})
             persisted_count += 1
 
     if persisted_count > 0:
-        print(f"✅ State persisted for {persisted_count} account(s).")
+        info(f"✅ State persisted for {persisted_count} account(s).")
     if persisted_count < len(accounts_with_csvs):
         failed_count = len(accounts_with_csvs) - persisted_count
-        print(f"⚠️  State NOT persisted for {failed_count} account(s) due to failures.")
+        warn(f"State NOT persisted for {failed_count} account(s) due to failures.")
 
     # Propagate run-all.sh failure to the caller (systemd, cron, etc.)
     if run_result.returncode != 0:
-        raise SystemExit(f"run-all.sh exited with code {run_result.returncode}")
+        fatal(f"run-all.sh exited with code {run_result.returncode}")
+        raise SystemExit(run_result.returncode)
 
     # Propagate fetch failures to the caller even if run-all.sh succeeded
     if failed_accounts:
-        raise SystemExit(f"⚠️  Some accounts failed during fetch: {[p.upper() for p in failed_accounts]}")
+        fatal(f"Some accounts failed during fetch: {[p.upper() for p in failed_accounts]}")
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

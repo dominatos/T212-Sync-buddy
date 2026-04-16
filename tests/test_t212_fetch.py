@@ -423,7 +423,7 @@ class TestLoadAccounts(unittest.TestCase):
         with patch.dict(os.environ, env, clear=True):
             with self.assertRaises(SystemExit) as ctx:
                 t212_fetch.load_accounts()
-            self.assertIn("ISA_GHOSTFOLIO_ACCOUNT_ID", str(ctx.exception))
+            self.assertEqual(ctx.exception.code, 1)
 
     def test_case_insensitive_dedup(self):
         """Deduplicates Trading212 account prefixes case-insensitively.
