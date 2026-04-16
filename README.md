@@ -1,8 +1,8 @@
-# T212-Sync-buddy: Automated Trading 212 to Ghostfolio Sync
+# T212-Sync-buddy: Automated Trading 212 to Ghostfolio/Investbrain Sync
 
-**T212-Sync-buddy** is a fully automated synchronization pipeline designed to safely extract your transaction history from the Trading 212 API and seamlessly import it into your Ghostfolio instance. 
+**T212-Sync-buddy** is a fully automated synchronization pipeline designed to safely extract your transaction history from the Trading 212 API and seamlessly import it into your Ghostfolio instance or Investbrain portfolio.
 
-Built for reliability and data integrity, this service handles everything from initial data bootstraps and smart Trading 212 API rate-limit management to automated data normalization and strict cross-verification. Whether you manage a single portfolio or sync multiple distinct Trading 212 accounts simultaneously, this tool runs quietly in the background (via Docker or systemd) to keep your Ghostfolio dashboard perfectly in sync.
+Built for reliability and data integrity, this service handles everything from initial data bootstraps and smart Trading 212 API rate-limit management to automated data normalization and strict cross-verification. Whether you manage a single portfolio or sync multiple distinct Trading 212 accounts simultaneously, this tool runs quietly in the background (via Docker or systemd) to keep your Ghostfolio dashboard or Investbrain portfolio perfectly in sync.
 
 ## Prerequisites
 
@@ -17,6 +17,8 @@ gawk --version
 # Install missing dependencies if needed
 sudo apt install docker.io jq gawk python3-full
 ```
+
+For local test runs, the current Python test suite also uses `freezegun` in addition to the runtime requirements from `requirements.txt`.
 ---
 
 
@@ -32,16 +34,22 @@ If you like this project, consider supporting me:
 Your final directory structure should look like this:
 ```text
 /path/to/T212-Sync-buddy/
-├── .env.sample           # Template for API credentials for manual runs
-└──               # logic and automation files
-    ├── .env              # your actual API credentials (copied from .env.sample) for automatic/systemd runs
-    ├── .state/           # auto-created, stores last fetch timestamps
-    ├── input/            # auto-created, CSV exports land here
-    ├── out/              # Ghostfolio-compatible JSONs land here
-    ├── temp/             # temporary directory used by the conversion script
-    ├── t212_fetch.py     # Main fetcher script
-    ├── run-all.sh        # Universal sync and verification script
-    └── systemdunits/     # Services and timers for automation
+├── .env.sample              # Template for API credentials and runtime options
+├── .env                     # Your actual credentials and local overrides
+├── .state/                  # Auto-created, stores per-account sync state and Yahoo cooldown marker
+├── input/                   # Auto-created, fetched CSV exports land here
+├── out/                     # Per-account JSON output and Investbrain success markers
+├── cache/                   # Converter cache
+├── temp/                    # Temporary working directory used during conversion/verification
+├── t212_fetch.py            # Main Trading212 fetcher
+├── run-all.sh               # CSV processing, Ghostfolio conversion, Investbrain handoff, verification
+├── investbrain_import.py    # Investbrain import/validation helper
+├── preprocess_isin.py       # Optional preprocessing for broker tickers before Ghostfolio conversion
+├── Dockerfile               # Container image for the fetcher workflow
+├── docker-compose.yml       # Containerized runner with Docker socket passthrough
+├── tests/                   # Python and BATS test suite
+├── systemdunits/            # Services and timers for automation
+└── README.md                # This guide
 ```
 
 ---
@@ -58,18 +66,20 @@ The core Python script for automated transaction retrieval from Trading 212 via 
 - **Flow**: After fetching, it automatically triggers `run-all.sh`.
 
 ### run-all.sh
-A universal Bash script for syncing CSV exports to Ghostfolio.
-- **Account Discovery**: Automatically finds all prefixed accounts in `.env`.
-- **Docker Integration**: Launches the `dickwolff/export-to-ghostfolio` container for each account.
-- **Smart Verification**: Automatically detects column headers (Date, Symbol, Quantity) in any CSV format to cross-verify the resulting JSON against the source CSV.
-- **Universal Support**: Works with 26+ brokers supported by the underlying `dickwolff/export-to-ghostfolio` repository (Trading 212, Revolut, IBKR, DEGIRO, etc.).
-- **Organization**: Moves completed imports to `out/account_name/` and archives processed CSVs to `input/done/`.
+A universal Bash script for processing CSV exports for Ghostfolio or Investbrain.
+- **Account Discovery**: Automatically finds prefixed accounts in `.env`.
+- **Single-Account Fallback**: Also supports unprefixed `GHOSTFOLIO_ACCOUNT_ID` or `INVESTBRAIN_PORTFOLIO_ID`, mapped internally to `default`.
+- **Ghostfolio Docker Integration**: Launches the `dickwolff/export-to-ghostfolio` container for Ghostfolio accounts.
+- **Investbrain Handoff**: Calls `investbrain_import.py` for Investbrain validation/import flows.
+- **Smart Verification**: Automatically detects column headers (Date, Symbol, Quantity, Price) to cross-verify Ghostfolio JSON against the source CSV.
+- **Yahoo Cooldown Logic**: Applies Yahoo pre-checks and converter-output cooldown handling for Ghostfolio conversions only.
+- **Organization**: Archives successful CSVs to `input/done/`, quarantines mismatches to `input/quarantine/`, and moves unverifiable CSVs to `input/unverified/`.
 
 ### systemdunits/t212-sync-buddy.service
 A Linux systemd service unit that defines *how* to run the synchronization. It calls `t212_fetch.py` using the dedicated Python virtual environment.
 
 ### systemdunits/t212-sync-buddy.timer
-A systemd timer that controls *when* the sync runs. By default, it is configured to trigger the synchronization daily at **08:00 AM**.
+A systemd timer that controls *when* the sync runs. In the current repository, it is configured to trigger the synchronization daily at **04:00 AM**.
 
 </details>
 
@@ -93,6 +103,12 @@ source venv/bin/activate
 
 # Install required Python packages
 pip install requests python-dotenv
+```
+
+If you want to run the current Python unit tests locally as well:
+
+```bash
+pip install freezegun
 ```
 
 </details>
@@ -149,25 +165,52 @@ Add your Trading212 API credentials and Ghostfolio settings. For security, it is
 PREFIX1_API_KEY=your_prefix1_api_key_here
 PREFIX1_API_SECRET=your_prefix1_api_secret_here
 PREFIX1_GHOSTFOLIO_ACCOUNT_ID=your_ghostfolio_account_id
+PREFIX1_INVESTBRAIN_PORTFOLIO_ID=your_investbrain_portfolio_id
 
 PREFIX2_API_KEY=your_prefix2_api_key_here
 PREFIX2_API_SECRET=your_prefix2_api_secret_here
 PREFIX2_GHOSTFOLIO_ACCOUNT_ID=your_ghostfolio_account_id
+PREFIX2_INVESTBRAIN_PORTFOLIO_ID=your_investbrain_portfolio_id
 
 # --- Ghostfolio Settings ---
 GHOSTFOLIO_URL=http://host.docker.internal:3333
 GHOSTFOLIO_SECRET=your_ghostfolio_secret_here
+
+# --- Investbrain Settings ---
+INVESTBRAIN_URL=https://your-investbrain-instance.com
+INVESTBRAIN_API_TOKEN=your_bearer_token_here
 
 # --- Ghostfolio Runtime Options ---
 GHOSTFOLIO_VALIDATE=true        # Validate activities against Ghostfolio before import
 GHOSTFOLIO_IMPORT=true          # Automatically import transactions
 GHOSTFOLIO_UPDATE_CASH=TRUE     # Update account cash balance after import
 NODE_OPTIONS="--max-old-space-size=4000" # Memory limit for large CSV processing
+
+# --- Investbrain Runtime Options ---
+INVESTBRAIN_VALIDATE=true       # Validate CSV before importing to Investbrain
+INVESTBRAIN_IMPORT=true         # Automatically import transactions to Investbrain
+
+# --- Yahoo Rate Limit Handling ---
+# t212_fetch.py checks Yahoo only when there are no Investbrain accounts configured.
+# run-all.sh applies the Yahoo pre-check and cooldown only for Ghostfolio conversions.
+# Cooldown state is stored in .state/yahoo_rate_limit.
+YAHOO_RATE_LIMIT_COOLDOWN_SECONDS=300
+YAHOO_RATE_LIMIT_CHECK_SYMBOL=AMZN
+
+# Manual Yahoo rate-limit check
+# Use this command to verify whether Yahoo Finance is currently rate limiting price lookups:
+# curl -sS -m 10 "https://query1.finance.yahoo.com/v7/finance/quote?symbols=AMZN"
+# If the command returns HTTP 429 or error text such as "Too Many Requests" then the pre-check will skip conversion.
+# Rate-limited responses may not be valid JSON, so the command falls back to raw text output.
 ```
 
 **How to get your credentials:**
 1.  **Trading212 API Key**: In the Trading212 app/web, go to **Menu → Settings → API (Beta) → Generate key**. This will provide both the **API Key** (Key ID) and the **Secret**.
 2.  **Ghostfolio Account ID**: In Ghostfolio, go to **Accounts**, select **Edit** for your account, and copy the ID shown in the URL or the edit window.
+3.  **Investbrain Portfolio ID**: In Investbrain, go to your portfolio settings or API documentation to find your portfolio ID.
+4.  **Investbrain API Token**: In Investbrain, go to **Settings → API Tokens** to generate a new token with appropriate permissions.
+
+You can configure accounts to sync to Ghostfolio, Investbrain, or both destinations for the same Trading212 prefix because `run-all.sh` discovers both `PREFIX_GHOSTFOLIO_ACCOUNT_ID` and `PREFIX_INVESTBRAIN_PORTFOLIO_ID` independently.
 
 Protect your credentials file:
 ```bash
@@ -186,20 +229,23 @@ To add more accounts in the future, simply add another pair of lines with a new 
 <details>
 <summary><h2>5. Understanding Account Prefixes</h2></summary>
 
-The scripts use **Prefixes** (like `PREFIX1` or `PREFIX2`) to link your Trading212 credentials to your specific Ghostfolio accounts. 
+The scripts use **Prefixes** (like `PREFIX1` or `PREFIX2`) to link your Trading212 credentials to your specific Ghostfolio accounts or Investbrain portfolios.
 
 ### Why use prefixes?
 - **Multiple Accounts**: You can sync as many separate Trading212 accounts as you want in a single run.
-- **Mapping**: The script automatically pairs `PREFIX_API_KEY` with its corresponding `PREFIX_GHOSTFOLIO_ACCOUNT_ID`.
+- **Platform Choice**: Each account can sync to Ghostfolio, Investbrain, or both if both destination IDs are configured for the same prefix.
+- **Mapping**: The script automatically pairs `PREFIX_API_KEY` with its corresponding `PREFIX_GHOSTFOLIO_ACCOUNT_ID` or `PREFIX_INVESTBRAIN_PORTFOLIO_ID`.
 - **Organization**: Data for each account is stored in its own sub-folder (e.g., `out/prefix1/`).
 
 ### How to customize:
 1. Choose any short name (e.g., `MYACC`, `JOHN`, `TRADING`).
-2. Use this name in your `.env` file (e.g., `JOHN_API_KEY=...` and `JOHN_GHOSTFOLIO_ACCOUNT_ID=...`).
+2. Use this name in your `.env` file (e.g., `JOHN_API_KEY=...` and `JOHN_GHOSTFOLIO_ACCOUNT_ID=...` or `JOHN_INVESTBRAIN_PORTFOLIO_ID=...`).
 3. The scripts will **automatically** find and process these prefixes.
 
 > [!TIP]
-> **Single account?**  If you have just one account, you still need to use prefix in .env file!
+> **Single account?** You can still use a named prefix, but `run-all.sh` also supports unprefixed `GHOSTFOLIO_ACCOUNT_ID` or `INVESTBRAIN_PORTFOLIO_ID` and maps them to the internal `default` prefix.
+>
+> **Mixed platforms?** You can have some accounts sync to Ghostfolio and others to Investbrain in the same configuration.
 </details>
 
 ---
@@ -232,16 +278,33 @@ docker compose run --rm t212-sync-buddy
 The **first run** (bootstrap) will:
 1.  **Auto-detect**: Find the date of your very first transaction.
 2.  **Full Fetch**: Download your entire history (this may take a few minutes due to T212 API rate limits).
-3.  **Save & Import**: Save CSVs to `input/` and trigger `run-all.sh` to update Ghostfolio.
+3.  **Save & Import**: Save CSVs to `input/` and trigger `run-all.sh` to hand them off to Ghostfolio and/or Investbrain.
 
 > [!IMPORTANT]
 > The scripts now operate exclusively within the `T212-Sync-buddy` directory. All input files (`input/`) and generated outputs (`out/`, `.state/`) will be found inside this folder.
 
 After this run, `.state/prefix1.json` and `.state/prefix2.json` are created. All future runs will only fetch the last 7 days. Status is tracked in `.state/`.
 
+## 7. Test Commands
+
+Run these from the repository root:
+
+```bash
+python3 -m py_compile t212_fetch.py
+bash -n run-all.sh
+python3 -m unittest tests/test_t212_fetch.py -v
+bats tests/test_run_all.bats
+```
+
+If `shellcheck` is installed locally, it is also useful for `run-all.sh`:
+
+```bash
+shellcheck run-all.sh
+```
+
 ---
 
-## 7. Set Up Automation (Systemd)
+## 8. Set Up Automation (Systemd)
 
 <details>
 <summary><h3>Option A: Bare Metal Automation</h3></summary>
@@ -299,7 +362,7 @@ If you use the Docker Compose setup (Section 3, Option B), use these systemd uni
 
 ---
 
-## 8. Monitoring and Maintenance
+## 9. Monitoring and Maintenance
 
 <details>
 <summary><h3>Bare Metal Monitoring</h3></summary>
@@ -377,7 +440,7 @@ journalctl -u t212-sync-buddy-docker.service -n 50 --since "yesterday"
 | Problem | Solution |
 | :--- | :--- |
 | `No accounts found in .env` | Ensure your `.env` variables use the correct `PREFIX_API_KEY` format. |
-| `429 Too Many Requests` | The script handles this automatically; it will pause and resume when allowed. |
+| `429 Too Many Requests` | Trading212 rate limits are retried automatically. Yahoo rate limits cause Ghostfolio conversion to be skipped until the cooldown in `.state/yahoo_rate_limit` expires. |
 | `Invalid Record Length` | Handled automatically by the script's normalization logic. |
 | `❌ JSON not found` | Check if Docker is running properly: `sudo systemctl status docker`. |
 | Timer not running | Inspect logs for path or permission errors: `journalctl -u t212-sync-buddy.service`. |

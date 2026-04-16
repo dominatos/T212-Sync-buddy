@@ -26,12 +26,21 @@ from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 
+# Countdown sleep function
+def countdown_sleep(seconds):
+    for i in range(seconds, 0, -1):
+        print(f"Sleeping {i}s...", end='\r')
+        time.sleep(1)
+    print("Sleeping 0s... Done.")
+
 # --- CONFIGURATION ---
 _script_dir = Path(__file__).resolve().parent
 
 # Configurable .env path: set T212_ENV_FILE to override (default: .env)
 _env_file = os.getenv("T212_ENV_FILE", str(_script_dir / ".env"))
+print(f"[DEBUG] Loading .env from: {_env_file}")
 load_dotenv(dotenv_path=_env_file)
+print(f"[DEBUG] .env file exists: {os.path.exists(_env_file)}")
 
 # Configurable data root: set T212_DATA_DIR to override (default: ./)
 _data_dir = Path(os.getenv("T212_DATA_DIR", str(_script_dir)))
@@ -46,49 +55,92 @@ BASE_HOST = "https://demo.trading212.com" if DEMO else "https://live.trading212.
 BASE_URL  = f"{BASE_HOST}/api/v0"
 
 # Ensure required directories exist
+if os.path.exists(STATE_DIR) and not os.path.isdir(STATE_DIR):
+    os.remove(STATE_DIR)
 os.makedirs(STATE_DIR, exist_ok=True)
+
+if os.path.exists(INPUT_DIR) and not os.path.isdir(INPUT_DIR):
+    os.remove(INPUT_DIR)
 os.makedirs(INPUT_DIR, exist_ok=True)
+
+
+def has_investbrain_accounts() -> bool:
+    """
+    Checks if any Investbrain accounts are configured in .env.
+    Returns True if at least one PREFIX_INVESTBRAIN_PORTFOLIO_ID is found.
+    """
+    print(f"[DEBUG] Checking for Investbrain accounts...")
+    investbrain_vars = []
+    investbrain_found = False
+    
+    # First, list ALL environment variables with "INVESTBRAIN" in the name
+    all_ib_vars = [key for key in os.environ if "INVESTBRAIN" in key]
+    print(f"[DEBUG] All INVESTBRAIN-related env vars: {all_ib_vars}")
+    
+    for key in os.environ:
+        if key.endswith("_INVESTBRAIN_PORTFOLIO_ID"):
+            portfolio_id = os.getenv(key)
+            investbrain_vars.append(f"{key}={portfolio_id}")
+            print(f"[DEBUG] Found Investbrain var: {key} = {portfolio_id}")
+            if portfolio_id and portfolio_id.strip():
+                investbrain_found = True
+    
+    print(f"[DEBUG] Investbrain portfolio vars found: {investbrain_vars}")
+    print(f"[DEBUG] has_investbrain_accounts returning: {investbrain_found}")
+    return investbrain_found
 
 
 def load_accounts() -> list[dict]:
     """
     Parses .env to find account credential pairs.
-    Expected format: PREFIX_API_KEY, PREFIX_API_SECRET, and PREFIX_GHOSTFOLIO_ACCOUNT_ID
+    Expected format: PREFIX_API_KEY, PREFIX_API_SECRET, and either PREFIX_GHOSTFOLIO_ACCOUNT_ID or PREFIX_INVESTBRAIN_PORTFOLIO_ID
     """
     accounts = []
     seen_prefixes = []  # Guard against duplicate env-var casing (e.g. ISA vs isa)
-    missing_gf_ids = []  # Collect prefixes missing their Ghostfolio account ID
+    missing_platform_ids = []  # Collect prefixes missing both platform account IDs
 
+    print(f"[DEBUG] Scanning environment variables for API credentials...")
     for key in os.environ:
         if key.endswith("_API_KEY"):
             prefix = key[: -len("_API_KEY")]       # strip suffix → "ISA", "CFD", etc.
             secret_key = f"{prefix}_API_SECRET"     # derive the companion secret var
             prefix_lower = prefix.lower()
+            print(f"[DEBUG] Found API_KEY: {key}, prefix={prefix}, secret_key={secret_key}")
 
             if prefix_lower in seen_prefixes:        # skip case-insensitive duplicates
+                print(f"[DEBUG] Skipping duplicate prefix: {prefix_lower}")
                 continue
             if os.getenv(secret_key):                # only add if both key+secret exist
                 gf_account_id = os.getenv(f"{prefix}_GHOSTFOLIO_ACCOUNT_ID")
-                if not gf_account_id:
-                    missing_gf_ids.append(prefix)
+                ib_portfolio_id = os.getenv(f"{prefix}_INVESTBRAIN_PORTFOLIO_ID")
+                print(f"[DEBUG] {prefix}: GF={gf_account_id}, IB={ib_portfolio_id}")
+                
+                # Accept account if it has either Ghostfolio OR Investbrain configuration
+                if not gf_account_id and not ib_portfolio_id:
+                    print(f"[DEBUG] Skipping {prefix}: no Ghostfolio or Investbrain account configured")
+                    missing_platform_ids.append(prefix)
                     seen_prefixes.append(prefix_lower)
                     continue
+                    
+                print(f"[DEBUG] Adding account {prefix}")
                 accounts.append({
                     "prefix": prefix_lower,
                     "api_key": os.getenv(key),
                     "api_secret": os.getenv(secret_key),
-                    # Validated above but not used by fetch logic — run-all.sh reads it
-                    # independently from .env. Kept here to confirm full account config.
+                    # These are used by run-all.sh, not by fetch logic
                     "ghostfolio_account_id": gf_account_id,
+                    "investbrain_portfolio_id": ib_portfolio_id,
                 })
                 seen_prefixes.append(prefix_lower)
+            else:
+                print(f"[DEBUG] Skipping {prefix}: no API_SECRET found")
 
-    if missing_gf_ids:
-        missing = ", ".join(f"{p}_GHOSTFOLIO_ACCOUNT_ID" for p in missing_gf_ids)
-        raise SystemExit(f"❌ Missing Ghostfolio account IDs in .env: {missing}")
+    if missing_platform_ids:
+        missing = ", ".join(f"{p}_GHOSTFOLIO_ACCOUNT_ID or {p}_INVESTBRAIN_PORTFOLIO_ID" for p in missing_platform_ids)
+        raise SystemExit(f"❌ Missing platform account IDs in .env: {missing}")
 
     if not accounts:
-        raise SystemExit("❌ No accounts found in .env. Expected format: PREFIX_API_KEY / PREFIX_API_SECRET / PREFIX_GHOSTFOLIO_ACCOUNT_ID")
+        raise SystemExit("❌ No accounts found in .env. Expected format: PREFIX_API_KEY / PREFIX_API_SECRET / PREFIX_GHOSTFOLIO_ACCOUNT_ID or PREFIX_INVESTBRAIN_PORTFOLIO_ID")
 
     return accounts
 
@@ -129,6 +181,31 @@ class RateLimitExceeded(Exception):
     pass
 
 
+def check_t212_rate_limit(headers: dict) -> bool:
+    """Check if Trading212 API is currently rate-limited by making a test request."""
+    try:
+        resp = requests.get(f"{BASE_URL}/equity/history/orders?limit=1", headers=headers, timeout=REQUEST_TIMEOUT)
+        return resp.status_code == 429
+    except Exception:
+        # If request fails for other reasons, assume not rate-limited
+        return False
+
+
+def check_yahoo_rate_limit() -> bool:
+    """Check if Yahoo Finance is currently rate-limited."""
+    symbol = os.getenv("YAHOO_RATE_LIMIT_CHECK_SYMBOL", "AMZN")
+    url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={symbol}"
+    try:
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 429:
+            return True
+        if 'too many requests' in resp.text.lower() or 'rate limit' in resp.text.lower() or 'service unavailable' in resp.text.lower():
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def safe_get(url: str, headers: dict, max_retries: int = MAX_429_RETRIES) -> requests.Response:
     """Wrapper for GET requests that handles 429 Rate Limiting with a retry cap."""
     retries = 0
@@ -146,7 +223,7 @@ def safe_get(url: str, headers: dict, max_retries: int = MAX_429_RETRIES) -> req
             # Wait until the reset window, minimum 10s to avoid tight loops; 60s fallback if missing/malformed
             wait = max(10, parsed - int(time.time()) + 1) if parsed is not None else 60
             print(f"  [RATE LIMIT] retry {retries}/{max_retries}, waiting {wait}s...")
-            time.sleep(wait)
+            countdown_sleep(wait)
             continue  # retry the exact same request
         resp.raise_for_status()
         return resp
@@ -168,7 +245,7 @@ def safe_post(url: str, headers: dict, json_body: dict, max_retries: int = MAX_4
             parsed = safe_parse_reset(resp.headers.get("x-ratelimit-reset"))
             wait = max(10, parsed - int(time.time()) + 1) if parsed is not None else 60
             print(f"  [RATE LIMIT] retry {retries}/{max_retries}, waiting {wait}s...")
-            time.sleep(wait)
+            countdown_sleep(wait)
             continue  # retry the exact same request
         resp.raise_for_status()
         return resp
@@ -199,9 +276,9 @@ def _page_earliest(headers: dict, start_url: str, extract_date) -> datetime | No
                 parsed = safe_parse_reset(resp.headers.get("x-ratelimit-reset"))
                 wait = max(10, parsed - int(time.time()) + 1) if parsed is not None else 10
                 print(f"  [RATE LIMIT] {remaining} remaining, waiting {wait}s...")
-                time.sleep(wait)
+                countdown_sleep(wait)
             else:
-                time.sleep(1)  # courtesy delay between pages
+                countdown_sleep(1)  # courtesy delay between pages
         else:
             next_url = None  # no more pages — stop iteration
 
@@ -268,7 +345,7 @@ def wait_for_export(headers: dict, report_id: int, timeout: int = 600) -> str:
                     print(" ready!")
                     return exp["downloadLink"]
         print(".", end="", flush=True)
-        time.sleep(61)  # T212 exports-status endpoint is hard-capped at 1 req/min
+        countdown_sleep(61)  # T212 exports-status endpoint is hard-capped at 1 req/min
     raise TimeoutError(f"Report {report_id} not ready after {timeout}s")
 
 
@@ -384,7 +461,7 @@ def fetch_account(account: dict) -> tuple[str | None, datetime]:
         report_ids.append((report_id, rf, rt))
         if i < len(ranges) - 1:
             print("  Waiting 31s (rate limit)...")
-            time.sleep(31)  # export-creation endpoint: max 1 req / 30s
+            countdown_sleep(31)  # export-creation endpoint: max 1 req / 30s
 
     # Download each completed export and merge into a single CSV (one header line)
     all_lines = []
@@ -434,14 +511,46 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main():
-    """Orchestrates multi-account Trading212 fetch and Ghostfolio conversion pipeline.
+    """Orchestrates multi-account Trading212 fetch and conversion pipeline.
 
     Loads configured accounts from .env, fetches transaction history for each,
-    hands off CSVs to run-all.sh for Ghostfolio import, and persists state only
+    hands off CSVs to run-all.sh for Ghostfolio/Investbrain import, and persists state only
     for successfully verified accounts.
     """
+    print("[DEBUG] ======== MAIN EXECUTION STARTED ========")
+    print(f"[DEBUG] Current working directory: {os.getcwd()}")
+    print(f"[DEBUG] Environment variables count: {len(os.environ)}")
+    
     accounts = load_accounts()
+    has_investbrain = has_investbrain_accounts()
     print(f"Found {len(accounts)} configured account(s): {[a['prefix'].upper() for a in accounts]}")
+    print(f"[DEBUG] has_investbrain = {has_investbrain}")
+    print(f"[DEBUG] Loaded accounts details:")
+    for acc in accounts:
+        print(f"[DEBUG]   - {acc['prefix'].upper()}: GF={acc.get('ghostfolio_account_id')}, IB={acc.get('investbrain_portfolio_id')}")
+    
+    if has_investbrain:
+        print("Found Investbrain accounts configured (Yahoo Finance rate limit check skipped)")
+    else:
+        print("No Investbrain accounts found (Yahoo Finance rate limit check will apply)")
+
+    # Check if Yahoo Finance is rate-limited before proceeding
+    # Only skip if there are NO Investbrain accounts (i.e., only Ghostfolio accounts exist)
+    print(f"[DEBUG] Checking Yahoo rate limit... (has_investbrain={has_investbrain})")
+    if not has_investbrain and check_yahoo_rate_limit():
+        print("⚠️ Yahoo Finance is rate-limited. Skipping fetch to avoid wasting API calls.")
+        raise SystemExit(1)
+    print(f"[DEBUG] Yahoo rate limit check passed or skipped")
+
+    # Check if Trading212 API is rate-limited before proceeding
+    rate_limited_accounts = []
+    for account in accounts:
+        headers = make_headers(account["api_key"], account["api_secret"])
+        if check_t212_rate_limit(headers):
+            rate_limited_accounts.append(account["prefix"].upper())
+    if rate_limited_accounts:
+        print(f"⚠️ Trading212 API is rate-limited for accounts: {rate_limited_accounts}. Skipping fetch.")
+        raise SystemExit(1)
 
     # Track which accounts produced CSVs for downstream per-account success checks
     accounts_with_csvs = []  # list of (account, csv_path, cutoff) tuples

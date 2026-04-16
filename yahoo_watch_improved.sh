@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# =========================
+# CONFIG
+# =========================
+SYMBOLS="${SYMBOLS:-AMZN,AAPL,MSFT}"
+OUT_DIR="${OUT_DIR:-/tmp/yahoo}"
+INTERVAL="${INTERVAL:-600}"   # 10 minutes
+BACKOFF_RATE_LIMIT="${BACKOFF_RATE_LIMIT:-900}"  # 15 minutes
+BACKOFF_UNAUTHORIZED="${BACKOFF_UNAUTHORIZED:-1800}"  # 30 minutes
+BACKOFF_NETWORK="${BACKOFF_NETWORK:-60}"  # 1 minute for network failures
+MAX_FILES="${MAX_FILES:-100}"  # Keep last 100 files
+
+mkdir -p "$OUT_DIR"
+
+# =========================
+# FUNCTIONS
+# =========================
+
+countdown_sleep() {
+    local seconds=$1
+    while [ "$seconds" -gt 0 ]; do
+        echo -ne "\rSleeping ${seconds}s... "
+        sleep 1
+        seconds=$((seconds - 1))
+    done
+    echo -e "\rSleeping 0s... Done."
+}
+
+log_info() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO] $*"
+}
+
+log_error() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $*" >&2
+}
+
+log_warn() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [WARN] $*" >&2
+}
+
+cleanup_old_files() {
+    local count
+    count=$(find "$OUT_DIR" -name "quote_*.json" | wc -l)
+    if [ "$count" -gt "$MAX_FILES" ]; then
+        log_info "Cleaning up old files (keeping last $MAX_FILES)"
+        find "$OUT_DIR" -name "quote_*.json" -type f | sort | head -n -$MAX_FILES | xargs rm -f
+    fi
+}
+
+fetch_quotes() {
+    local url="$1"
+    local output_file="$2"
+    local http_code
+    http_code=$(curl -sS -m 10 -w '%{http_code}' -o "$output_file" \
+        -H "User-Agent: Mozilla/5.0" \
+        "$url" 2>/dev/null || echo "000")
+    echo "$http_code"
+}
+
+validate_response() {
+    local response_file="$1"
+    local http_code="$2"
+
+    if [ "$http_code" != "200" ]; then
+        case "$http_code" in
+            429)
+                log_error "Rate limited (HTTP $http_code)"
+                return 1  # rate limit
+                ;;
+            401|403)
+                log_error "Unauthorized (HTTP $http_code)"
+                return 2  # unauthorized
+                ;;
+            000)
+                log_error "Network failure or timeout"
+                return 3  # network
+                ;;
+            *)
+                log_error "HTTP error $http_code"
+                return 4  # other
+                ;;
+        esac
+    fi
+
+    # Check if response is valid JSON with quoteResponse
+    if command -v jq >/dev/null 2>&1; then
+        if ! jq -e '.quoteResponse' "$response_file" >/dev/null 2>&1; then
+            log_error "Invalid JSON response"
+            return 4
+        fi
+    else
+        if ! grep -q '"quoteResponse"' "$response_file"; then
+            log_error "Missing quoteResponse in response"
+            return 4
+        fi
+    fi
+
+    return 0
+}
+
+send_to_telegram() {
+    local file="$1"
+    if command -v tg_send >/dev/null 2>&1; then
+        tg_send "$file"
+        log_info "Sent to Telegram"
+    else
+        log_warn "tg_send not found, skipping Telegram"
+    fi
+}
+
+handle_backoff() {
+    local reason="$1"
+    local backoff_seconds="$2"
+    log_info "Backing off for ${backoff_seconds}s due to: $reason"
+    countdown_sleep "$backoff_seconds"
+}
+
+# =========================
+# SIGNAL HANDLING
+# =========================
+trap 'log_info "Received signal, stopping..."; exit 0' INT TERM
+
+# =========================
+# MAIN LOOP
+# =========================
+URL="https://query1.finance.yahoo.com/v7/finance/quote?symbols=${SYMBOLS}"
+
+log_info "Starting Yahoo watch loop (interval: ${INTERVAL}s, symbols: $SYMBOLS)"
+
+while true; do
+    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    FILE="${OUT_DIR}/quote_${TIMESTAMP}.json"
+
+    log_info "Checking API..."
+
+    HTTP_CODE=$(fetch_quotes "$URL" "$FILE")
+
+    if ! validate_response "$FILE" "$HTTP_CODE"; then
+        case $? in
+            1) handle_backoff "rate limit" "$BACKOFF_RATE_LIMIT" ;;
+            2) handle_backoff "unauthorized" "$BACKOFF_UNAUTHORIZED" ;;
+            3) handle_backoff "network failure" "$BACKOFF_NETWORK" ;;
+            *) handle_backoff "other error" "$INTERVAL" ;;
+        esac
+        continue
+    fi
+
+    log_info "Saved: $FILE"
+    tg_send "$FILE"
+    cleanup_old_files
+
+    log_info "Sleeping ${INTERVAL}s..."
+    countdown_sleep "$INTERVAL"
+done
