@@ -19,7 +19,7 @@ import os
 import json
 import time
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -117,7 +117,7 @@ def parse_csv_row(row: dict) -> dict:
         warn(f"Error parsing date '{time_str}': {e}")
         return None
 
-    date = date_obj.strftime('%Y-%m-%d %H:%M:%S')
+    date = date_obj.strftime('%Y-%m-%d')
 
     # Symbol - prefer Ticker, fallback to ISIN if ticker is empty
     symbol = row.get('Ticker', '').strip()
@@ -215,18 +215,39 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
             reader = csv.DictReader(f, dialect=dialect)
             trace("CSV reader created, dialect detected")
 
+            # 1. Parse all valid transactions into a list first
+            transactions = []
+            for row in reader:
+                tx = parse_csv_row(row)
+                if tx:
+                    tx['portfolio_id'] = portfolio_id
+                    transactions.append(tx)
+                else:
+                    skipped_count += 1
+            
+            # 2. Fix intraday conflicts (shift BUYs to D-1 if there's a same-day SELL)
+            # This is a workaround for Investbrain's validation logic which ignores same-day buys.
+            # (Investbrain rule uses 'whereDate(date, <, sell_date)')
+            sym_date_has_sell = set()
+            for tx in transactions:
+                if tx['transaction_type'] == 'SELL':
+                    sym_date_has_sell.add((tx['symbol'], tx['date']))
+
+            for tx in transactions:
+                if tx['transaction_type'] == 'BUY' and (tx['symbol'], tx['date']) in sym_date_has_sell:
+                    original_date = tx['date']
+                    dt = datetime.strptime(original_date, '%Y-%m-%d')
+                    shifted_dt = dt - timedelta(days=1)
+                    tx['date'] = shifted_dt.strftime('%Y-%m-%d')
+                    debug(f"Applied Intraday Workaround: Shifted {tx['symbol']} BUY from {original_date} to {tx['date']}")
+
+            # 3. Import the transactions sequentially
             prev_symbol = None
             prev_date = None
 
-            for row_num, row in enumerate(reader, 1):
+            for row_num, transaction in enumerate(transactions, 1):
 
-                transaction = parse_csv_row(row)
-                if transaction is None:
-                    skipped_count += 1
-                    continue  # Skip non-trade rows
-
-                # Delay for same-symbol same-day transactions to avoid 422 errors
-                # (Investbrain needs time to process a BUY before a SELL on same day)
+                # Delay for same-symbol same-day transactions to avoid race conditions
                 curr_symbol = transaction.get('symbol')
                 curr_date = transaction.get('date', '')[:10]
                 if (not validate_only
@@ -237,9 +258,6 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                     time.sleep(SAME_DAY_DELAY_SECONDS)
                 prev_symbol = curr_symbol
                 prev_date = curr_date
-
-                # Add portfolio_id
-                transaction['portfolio_id'] = portfolio_id
 
                 if validate_only:
                     info(f"[VALIDATE] Would import: {transaction}")
