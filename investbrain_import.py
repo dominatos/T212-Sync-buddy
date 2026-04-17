@@ -179,6 +179,53 @@ def parse_csv_row(row: dict) -> dict:
 
     return transaction
 
+def fetch_existing_fingerprints(portfolio_id: str, api_url: str, headers: dict) -> set:
+    """
+    Fetches all existing transactions from Investbrain for the given portfolio to prevent duplicates.
+    Returns a set of tuples: (symbol, transaction_type, date, round(quantity, 5), round(price, 4))
+    """
+    fingerprints = set()
+    page = 1
+    info("🔍 Fetching existing Investbrain transactions for deduplication...")
+    
+    while True:
+        url = f"{api_url.rstrip('/')}/api/transaction?portfolio_id={portfolio_id}&page={page}"
+        trace(f"Fetching page {page} of existing transactions...")
+        try:
+            response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+            if response.status_code != 200:
+                warn(f"Failed to fetch transactions (HTTP {response.status_code}). Deduplication may be incomplete.")
+                break
+                
+            data = response.json()
+            transactions = data.get('data', [])
+            if not transactions:
+                break
+                
+            for tx in transactions:
+                symbol = tx.get('symbol')
+                tx_type = tx.get('transaction_type')
+                # Date comes back as 'YYYY-MM-DD' from API
+                date = tx.get('date', '')[:10]
+                qty = round(float(tx.get('quantity') or 0), 5)
+                price_val = tx.get('cost_basis') if tx_type == 'BUY' else tx.get('sale_price')
+                price = round(float(price_val or 0), 4)
+                
+                fingerprints.add((symbol, tx_type, date, qty, price))
+                
+            meta = data.get('meta', {})
+            # Stop if we've reached the last page or next link is null
+            if meta.get('current_page') == meta.get('last_page') or not data.get('links', {}).get('next'):
+                break
+            page += 1
+            
+        except Exception as e:
+            warn(f"Error fetching existing transactions: {e}")
+            break
+            
+    debug(f"Found {len(fingerprints)} existing transactions for deduplication.")
+    return fingerprints
+
 def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_token: str, validate_only: bool = False) -> tuple[int, int, int]:
     """
     Imports transactions from CSV to Investbrain.
@@ -196,6 +243,10 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
     success_count = 0
     error_count = 0
     skipped_count = 0
+
+    existing_fingerprints = set()
+    if not validate_only:
+        existing_fingerprints = fetch_existing_fingerprints(portfolio_id, api_url, headers)
 
     try:
         with open(csv_path, 'r', encoding='utf-8') as f:
@@ -246,8 +297,21 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
             prev_date = None
 
             for row_num, transaction in enumerate(transactions, 1):
+                # 1. Deduplication Check
+                symbol = transaction.get('symbol')
+                tx_type = transaction.get('transaction_type')
+                date = transaction.get('date', '')[:10]
+                qty = round(float(transaction.get('quantity', 0)), 5)
+                price_val = transaction.get('cost_basis') if tx_type == 'BUY' else transaction.get('sale_price')
+                price = round(float(price_val or 0), 4)
+                
+                fingerprint = (symbol, tx_type, date, qty, price)
+                if not validate_only and fingerprint in existing_fingerprints:
+                    info(f"⏭️ Skipping duplicate: {symbol} {tx_type} {qty} @ {price} on {date}")
+                    skipped_count += 1
+                    continue
 
-                # Delay for same-symbol same-day transactions to avoid race conditions
+                # 2. Delay for same-symbol same-day transactions to avoid race conditions
                 curr_symbol = transaction.get('symbol')
                 curr_date = transaction.get('date', '')[:10]
                 if (not validate_only
