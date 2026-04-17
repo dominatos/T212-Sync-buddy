@@ -129,7 +129,8 @@ CSV
     # Clear relevant env vars
     unset ISA_API_KEY ISA_GHOSTFOLIO_ACCOUNT_ID GHOSTFOLIO_ACCOUNT_ID 2>/dev/null || true
 
-    run bash "$TEST_DIR/run-all.sh"
+    cd "$TEST_DIR"
+    run bash run-all.sh
     [ "$status" -eq 1 ]
     [[ "$output" == *"No accounts found"* ]]
 }

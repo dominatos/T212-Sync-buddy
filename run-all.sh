@@ -80,15 +80,30 @@ fi
 
 # Validate that every CSV prefix in input/ has a matching account in either Ghostfolio or Investbrain
 orphan_found=false
+declare -g -A csv_required_count
+declare -g -A csv_success_count
+
 for csv_file in input/*-*.csv; do
     [[ -f "$csv_file" ]] || continue
     fname=$(basename "$csv_file")
     # Extract prefix: everything before the first '-' (hyphen-only contract)
     csv_prefix="${fname%%-*}"
     csv_prefix=$(echo "$csv_prefix" | tr '[:upper:]' '[:lower:]')
-    if [[ -z "${ghostfolio_accounts[$csv_prefix]+_}" && -z "${investbrain_accounts[$csv_prefix]+_}" ]]; then
+    
+    req_count=0
+    if [[ -n "${ghostfolio_accounts[$csv_prefix]+_}" ]]; then
+      req_count=$((req_count + 1))
+    fi
+    if [[ -n "${investbrain_accounts[$csv_prefix]+_}" ]]; then
+      req_count=$((req_count + 1))
+    fi
+    
+    if [[ "$req_count" -eq 0 ]]; then
         log_error "Orphan CSV prefix '$csv_prefix' (from $fname) has no matching account in .env"
         orphan_found=true
+    else
+        csv_required_count["$fname"]=$req_count
+        csv_success_count["$fname"]=0
     fi
 done
 if [[ "$orphan_found" == true ]]; then
@@ -124,12 +139,12 @@ check_yahoo_rate_limit_probe() {
     return 1
   fi
 
-  mkdir -p temp
+  mkdir -p temp .state
   # Use v8/finance/chart — the endpoint family that yahoo-finance2 and
   # Ghostfolio actually rely on.  The old v7/finance/quote is permanently 429
   # without auth.  A browser-like User-Agent is required to avoid bot blocking.
   probe_url="https://query1.finance.yahoo.com/v8/finance/chart/${YAHOO_RATE_LIMIT_CHECK_SYMBOL}?range=1d&interval=1d"
-  http_code=$(curl -sS -m 10 -o temp/yahoo_probe.json -w '%{http_code}' \
+  http_code=$(curl -sS -m 10 -o .state/yahoo_probe.json -w '%{http_code}' \
     -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
     "$probe_url" 2>/dev/null || echo "000")
 
@@ -137,7 +152,7 @@ check_yahoo_rate_limit_probe() {
     return 0
   fi
 
-  if grep -qiE 'too many requests|rate limit|service unavailable' temp/yahoo_probe.json; then
+  if grep -qiE 'too many requests|rate limit|service unavailable' .state/yahoo_probe.json; then
     return 0
   fi
 
@@ -211,11 +226,11 @@ process_account() {
     log_info "📄 Processing broker file: $csv_name ($tx_count transactions)"
 
     # Preparation: Clean temp directory for this CSV processing run
-    mkdir -p temp out cache
+    mkdir -p temp out cache .state
     if [[ "$platform" == "ghostfolio" ]]; then
       rm -f out/ghostfolio-*.json
     fi
-    rm -f temp/*.csv temp/*.txt temp/docker_output.log  # Clean both CSVs, old test files, and leftover converter logs
+    rm -f temp/*.csv temp/*.txt .state/docker_output.log  # Clean both CSVs, old test files, and leftover converter logs
     cp "$csv_file" "temp/$csv_name"
 
     # Preprocess CSV: Replace problematic tickers (.L, .XC) with ISINs for proper price lookup
@@ -249,9 +264,9 @@ process_account() {
         --env GHOSTFOLIO_SECRET="$GHOSTFOLIO_SECRET" \
         --env NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=4000}" \
         --add-host=host.docker.internal:host-gateway \
-        dickwolff/export-to-ghostfolio 2>&1 | tee temp/docker_output.log
+        dickwolff/export-to-ghostfolio 2>&1 | tee .state/docker_output.log
 
-      if grep -qiE 'yahoo.*rate limit|too many requests|429' temp/docker_output.log; then
+      if grep -qiE 'yahoo.*rate limit|too many requests|429' .state/docker_output.log; then
         log_warn "Detected Yahoo/price lookup rate limit in converter output."
         mark_yahoo_rate_limit
         log_warn "⏳ Skipping further conversions for ${YAHOO_RATE_LIMIT_COOLDOWN_SECONDS}s."
@@ -463,9 +478,16 @@ process_account() {
     rm -f "temp/$csv_name"
 
     # Archive processed CSV to prevent replay on next run
-    mkdir -p "input/done"
-    mv "$csv_file" "input/done/"
-    log_info "📦 Archived $csv_name → input/done/"
+    # Only archive when ALL configured platforms have successfully processed it
+    csv_success_count["$csv_name"]=$(( csv_success_count["$csv_name"] + 1 ))
+    
+    if [[ ${csv_success_count["$csv_name"]} -ge ${csv_required_count["$csv_name"]} ]]; then
+      mkdir -p "input/done"
+      mv "$csv_file" "input/done/"
+      log_info "📦 Archived $csv_name → input/done/"
+    else
+      log_info "⏳ Passed $platform. Waiting for other platforms before archiving... (${csv_success_count["$csv_name"]}/${csv_required_count["$csv_name"]})"
+    fi
     
     echo ""
   done

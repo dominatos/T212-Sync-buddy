@@ -6,7 +6,7 @@ tofix.md
 post.md
 tests/temp/differenace-in-balance.md
 .gitignore
-tests/temp/analyze_cash.py
+
 log
 prompt.txt
 __pycache__/
@@ -17,3 +17,7 @@ history.txt
 testing-command.sh
 issue.md
 testinvestbrain-issue/
+.state/
+input/
+out/
+temp/
