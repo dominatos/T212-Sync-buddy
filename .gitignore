@@ -21,3 +21,5 @@ testinvestbrain-issue/
 input/
 out/
 temp/
+test_dump.py
+dump.json
