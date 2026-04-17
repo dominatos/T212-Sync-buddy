@@ -17,6 +17,7 @@ import requests
 import csv
 import os
 import json
+import time
 from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
@@ -52,6 +53,7 @@ for key in os.environ:
         trace(f"  {key}={value}")
 
 REQUEST_TIMEOUT = (30, 200)  # (connect_timeout, read_timeout)
+SAME_DAY_DELAY_SECONDS = float(os.getenv("INVESTBRAIN_SAME_DAY_DELAY_SECONDS", "2"))  # delay between same-symbol same-day transactions
 
 def get_investbrain_headers(api_token: str) -> dict:
     """Creates Bearer token headers for Investbrain API requests."""
@@ -173,10 +175,10 @@ def parse_csv_row(row: dict) -> dict:
 
     return transaction
 
-def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_token: str, validate_only: bool = False) -> tuple[int, int]:
+def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_token: str, validate_only: bool = False) -> tuple[int, int, int]:
     """
     Imports transactions from CSV to Investbrain.
-    Returns (success_count, error_count)
+    Returns (success_count, error_count, skipped_count)
     """
     info(f"Processing CSV: {csv_path}")
     trace(f"import_to_investbrain called with:")
@@ -189,6 +191,7 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
     headers = get_investbrain_headers(api_token)
     success_count = 0
     error_count = 0
+    skipped_count = 0
 
     try:
         with open(csv_path, 'r', encoding='utf-8') as f:
@@ -208,11 +211,28 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
             reader = csv.DictReader(f, dialect=dialect)
             trace("CSV reader created, dialect detected")
 
+            prev_symbol = None
+            prev_date = None
+
             for row_num, row in enumerate(reader, 1):
 
                 transaction = parse_csv_row(row)
                 if transaction is None:
+                    skipped_count += 1
                     continue  # Skip non-trade rows
+
+                # Delay for same-symbol same-day transactions to avoid 422 errors
+                # (Investbrain needs time to process a BUY before a SELL on same day)
+                curr_symbol = transaction.get('symbol')
+                curr_date = transaction.get('date', '')[:10]
+                if (not validate_only
+                        and prev_symbol == curr_symbol
+                        and prev_date == curr_date
+                        and SAME_DAY_DELAY_SECONDS > 0):
+                    debug(f"Same-day same-symbol ({curr_symbol} on {curr_date}), delaying {SAME_DAY_DELAY_SECONDS}s")
+                    time.sleep(SAME_DAY_DELAY_SECONDS)
+                prev_symbol = curr_symbol
+                prev_date = curr_date
 
                 # Add portfolio_id
                 transaction['portfolio_id'] = portfolio_id
@@ -243,12 +263,12 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
 
     except FileNotFoundError:
         error(f"CSV file not found: {csv_path}")
-        return 0, 1
+        return 0, 1, 0
     except Exception as e:
         error(f"Error processing CSV: {e}")
-        return 0, 1
+        return 0, 1, 0
 
-    return success_count, error_count
+    return success_count, error_count, skipped_count
 
 def main():
     parser = argparse.ArgumentParser(description="Trading212 CSV → Investbrain API Importer")
@@ -286,7 +306,7 @@ def main():
     debug(f"  Portfolio ID: ***")
     trace(f"  API Token: set (length={len(args.api_token) if args.api_token else 0})")
 
-    success_count, error_count = import_to_investbrain(
+    success_count, error_count, skipped_count = import_to_investbrain(
         args.csv_file,
         args.portfolio_id,
         args.api_url,
@@ -294,7 +314,7 @@ def main():
         args.validate_only
     )
 
-    info(f"Results: {success_count} successful, {error_count} errors")
+    info(f"Results: {success_count} successful, {skipped_count} skipped (non-trade), {error_count} errors")
 
     if error_count > 0:
         return 1
