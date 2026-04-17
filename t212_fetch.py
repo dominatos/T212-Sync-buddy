@@ -211,11 +211,16 @@ def check_t212_rate_limit(headers: dict) -> bool:
 
 
 def check_yahoo_rate_limit() -> bool:
-    """Check if Yahoo Finance is currently rate-limited."""
+    """Check if Yahoo Finance is currently rate-limited.
+    Uses v8/finance/chart — the endpoint family that yahoo-finance2 and
+    Ghostfolio actually rely on.  The old v7/finance/quote is permanently 429
+    without auth.  A browser-like User-Agent is required to avoid bot blocking.
+    """
     symbol = os.getenv("YAHOO_RATE_LIMIT_CHECK_SYMBOL", "AMZN")
-    url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={symbol}"
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=1d&interval=1d"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     try:
-        resp = requests.get(url, timeout=10)
+        resp = requests.get(url, headers=headers, timeout=10)
         if resp.status_code == 429:
             return True
         if 'too many requests' in resp.text.lower() or 'rate limit' in resp.text.lower() or 'service unavailable' in resp.text.lower():
@@ -557,8 +562,8 @@ def main():
     # Only skip if there are NO Investbrain accounts (i.e., only Ghostfolio accounts exist)
     trace(f"Checking Yahoo rate limit... (has_investbrain={has_investbrain})")
     if not has_investbrain and check_yahoo_rate_limit():
-        warn("Yahoo Finance is rate-limited. Skipping fetch to avoid wasting API calls.")
-        raise SystemExit(1)
+        warn("Yahoo Finance pre-check detected possible rate limiting (non-blocking — converter has its own retry logic).")
+        # Non-blocking: proceed with fetch. The converter handles Yahoo rate limits internally.
     trace("Yahoo rate limit check passed or skipped")
 
     # Check if Trading212 API is rate-limited before proceeding

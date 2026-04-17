@@ -54,7 +54,7 @@ fetch_quotes() {
     local output_file="$2"
     local http_code
     http_code=$(curl -sS -m 10 -w '%{http_code}' -o "$output_file" \
-        -H "User-Agent: Mozilla/5.0" \
+        -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
         "$url" 2>/dev/null || echo "000")
     echo "$http_code"
 }
@@ -84,15 +84,15 @@ validate_response() {
         esac
     fi
 
-    # Check if response is valid JSON with quoteResponse
+    # Check if response is valid JSON
     if command -v jq >/dev/null 2>&1; then
-        if ! jq -e '.quoteResponse' "$response_file" >/dev/null 2>&1; then
+        if ! jq -e . "$response_file" >/dev/null 2>&1; then
             log_error "Invalid JSON response"
             return 4
         fi
     else
-        if ! grep -q '"quoteResponse"' "$response_file"; then
-            log_error "Missing quoteResponse in response"
+        if ! grep -q "{" "$response_file"; then
+            log_error "Missing JSON response"
             return 4
         fi
     fi
@@ -125,7 +125,7 @@ trap 'log_info "Received signal, stopping..."; exit 0' INT TERM
 # =========================
 # MAIN LOOP
 # =========================
-URL="https://query1.finance.yahoo.com/v7/finance/quote?symbols=${SYMBOLS}"
+URL="https://query1.finance.yahoo.com/v8/finance/spark?symbols=${SYMBOLS}&range=1d&interval=1d"
 
 log_info "Starting Yahoo watch loop (interval: ${INTERVAL}s, symbols: $SYMBOLS)"
 

@@ -125,8 +125,13 @@ check_yahoo_rate_limit_probe() {
   fi
 
   mkdir -p temp
-  probe_url="https://query1.finance.yahoo.com/v7/finance/quote?symbols=${YAHOO_RATE_LIMIT_CHECK_SYMBOL}"
-  http_code=$(curl -sS -m 10 -o temp/yahoo_probe.json -w '%{http_code}' "$probe_url" 2>/dev/null || echo "000")
+  # Use v8/finance/chart — the endpoint family that yahoo-finance2 and
+  # Ghostfolio actually rely on.  The old v7/finance/quote is permanently 429
+  # without auth.  A browser-like User-Agent is required to avoid bot blocking.
+  probe_url="https://query1.finance.yahoo.com/v8/finance/chart/${YAHOO_RATE_LIMIT_CHECK_SYMBOL}?range=1d&interval=1d"
+  http_code=$(curl -sS -m 10 -o temp/yahoo_probe.json -w '%{http_code}' \
+    -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+    "$probe_url" 2>/dev/null || echo "000")
 
   if [[ "$http_code" == "429" ]]; then
     return 0
@@ -198,11 +203,7 @@ process_account() {
       fi
 
       if check_yahoo_rate_limit_probe; then
-        log_warn "Yahoo Finance pre-check detected rate limiting."
-        mark_yahoo_rate_limit
-        log_warn "⏳ Skipping conversion for ${YAHOO_RATE_LIMIT_COOLDOWN_SECONDS}s."
-        had_failure=1
-        continue
+        log_warn "Yahoo Finance pre-check detected possible rate limiting (non-blocking — converter has its own retry logic)."
       fi
     fi
 
