@@ -117,7 +117,7 @@ def parse_csv_row(row: dict) -> dict:
         warn(f"Error parsing date '{time_str}': {e}")
         return None
 
-    date = date_obj.strftime('%Y-%m-%d')
+    date = date_obj.strftime('%Y-%m-%d %H:%M:%S')
 
     # Symbol - prefer Ticker, fallback to ISIN if ticker is empty
     symbol = row.get('Ticker', '').strip()
@@ -157,6 +157,10 @@ def parse_csv_row(row: dict) -> dict:
     # LSE stocks in Yahoo Finance require a .L suffix.
     if currency == 'GBP' and '.' not in symbol:
         symbol = f"{symbol}.L"
+
+    # XETRA stocks in Yahoo Finance often require a .DE suffix.
+    if currency == 'EUR' and '.' not in symbol and symbol != 'EUR':
+        symbol = f"{symbol}.DE"
 
     # Build transaction data
     transaction = {
