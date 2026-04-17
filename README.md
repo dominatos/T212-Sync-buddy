@@ -42,8 +42,8 @@ Your final directory structure should look like this:
 ├── cache/                   # Converter cache
 ├── temp/                    # Temporary working directory used during conversion/verification
 ├── t212_fetch.py            # Main Trading212 fetcher
-├── run-all.sh               # CSV processing, Ghostfolio conversion, Investbrain handoff, verification
-├── investbrain_import.py    # Investbrain import/validation helper
+├── run-all.sh               # Orchestrator for Ghostfolio conversion and Investbrain handoff
+├── investbrain_import.py    # Investbrain integration with intraday workaround and symbol mapping
 ├── preprocess_isin.py       # Optional preprocessing for broker tickers before Ghostfolio conversion
 ├── Dockerfile               # Container image for the fetcher workflow
 ├── docker-compose.yml       # Containerized runner with Docker socket passthrough
@@ -66,14 +66,22 @@ The core Python script for automated transaction retrieval from Trading 212 via 
 - **Flow**: After fetching, it automatically triggers `run-all.sh`.
 
 ### run-all.sh
-A universal Bash script for processing CSV exports for Ghostfolio or Investbrain.
-- **Account Discovery**: Automatically finds prefixed accounts in `.env`.
-- **Single-Account Fallback**: Also supports unprefixed `GHOSTFOLIO_ACCOUNT_ID` or `INVESTBRAIN_PORTFOLIO_ID`, mapped internally to `default`.
-- **Ghostfolio Docker Integration**: Launches the `dickwolff/export-to-ghostfolio` container for Ghostfolio accounts.
-- **Investbrain Handoff**: Calls `investbrain_import.py` for Investbrain validation/import flows.
-- **Smart Verification**: Automatically detects column headers (Date, Symbol, Quantity, Price) to cross-verify Ghostfolio JSON against the source CSV.
-- **Yahoo Cooldown Logic**: Applies Yahoo pre-checks and converter-output cooldown handling for Ghostfolio conversions only.
-- **Organization**: Archives successful CSVs to `input/done/`, quarantines mismatches to `input/quarantine/`, and moves unverifiable CSVs to `input/unverified/`.
+The universal orchestrator for processing CSV exports.
+- **Account Discovery**: Automatically finds all `PREFIX_*` accounts in `.env`.
+- **Platform Handoff**: 
+  - **Ghostfolio**: Launches the `dickwolff/export-to-ghostfolio` container.
+  - **Investbrain**: Specifically optimized for accurate cost-basis and dividend reporting.
+- **Smart Data Enrichment (Investbrain)**:
+  - Automatically triggers `refresh:currency-data` before import to ensure accurate FX conversions.
+  - Triggers `refresh:market-data` and `refresh:dividend-data` after import for instant portfolio updates.
+- **Verification**: Cross-verifies Ghostfolio JSON output against the source CSV.
+- **Organization**: Archives successful files to `input/done/` and quarantines failures.
+
+### investbrain_import.py
+A sophisticated importer designed to handle Investbrain-specific edge cases:
+- **Intraday Workaround**: Automatically detects same-day trade conflicts and implements a sequential delay/shifting logic to bypass Investbrain validation bugs.
+- **Symbol Mapping**: Auto-appends exchange suffixes (`.DE`, `.L`) to ensure compatibility with Yahoo Finance.
+- **Error Handling**: Detailed reporting of HTTP 422 validation errors.
 
 ### systemdunits/t212-sync-buddy.service
 A Linux systemd service unit that defines *how* to run the synchronization. It calls `t212_fetch.py` using the dedicated Python virtual environment.
@@ -161,7 +169,7 @@ Add your Trading212 API credentials and Ghostfolio settings. For security, it is
 
 ```ini
 # --- Trading212 API Keys ---
-# Format: PREFIX_API_KEY and PREFIX_API_SECRET. For security it is recommended to create api keys with limited permissions for only read.
+# Format: PREFIX_API_KEY and PREFIX_API_SECRET. For security, it is highly recommended to create API keys with "Read-only" permissions.
 PREFIX1_API_KEY=your_prefix1_api_key_here
 PREFIX1_API_SECRET=your_prefix1_api_secret_here
 PREFIX1_GHOSTFOLIO_ACCOUNT_ID=your_ghostfolio_account_id
@@ -177,6 +185,7 @@ GHOSTFOLIO_URL=http://host.docker.internal:3333
 GHOSTFOLIO_SECRET=your_ghostfolio_secret_here
 
 # --- Investbrain Settings ---
+# token can be created at http://your-investbrain-instance.com/user/api-tokens
 INVESTBRAIN_URL=https://your-investbrain-instance.com
 INVESTBRAIN_API_TOKEN=your_bearer_token_here
 
@@ -189,6 +198,8 @@ NODE_OPTIONS="--max-old-space-size=4000" # Memory limit for large CSV processing
 # --- Investbrain Runtime Options ---
 INVESTBRAIN_VALIDATE=true       # Validate CSV before importing to Investbrain
 INVESTBRAIN_IMPORT=true         # Automatically import transactions to Investbrain
+INVESTBRAIN_SAME_DAY_DELAY_SECONDS=2 # Delay between intraday trades to prevent 422 errors
+INVESTBRAIN_AUTO_REFRESH=true   # Automatically trigger Investbrain server-side data refreshes
 
 # --- Yahoo Rate Limit Handling ---
 # t212_fetch.py checks Yahoo only when there are no Investbrain accounts configured.

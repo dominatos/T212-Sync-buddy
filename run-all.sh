@@ -470,6 +470,12 @@ process_account() {
   done
 }
 
+# --- GLOBAL INVESTBRAIN REFRESH (Pre-Import) ---
+if [[ ${#investbrain_accounts[@]} -gt 0 && "${INVESTBRAIN_IMPORT:-}" == "true" ]]; then
+    log_info "🔄 Refreshing Investbrain historical currency rates..."
+    docker exec investbrain-app php artisan refresh:currency-data || log_warn "Failed to refresh currency-data"
+fi
+
 # Iterate through discovered accounts/prefixes
 for prefix in "${!ghostfolio_accounts[@]}"; do
   log_debug "Processing Ghostfolio account: $prefix"
@@ -483,6 +489,13 @@ for prefix in "${!ghostfolio_accounts[@]}"; do
   log_trace "Calling process_account for Ghostfolio: prefix=$prefix, account_id=***"
   process_account "$prefix" "$account_id" "ghostfolio"
 done
+
+# --- GLOBAL INVESTBRAIN REFRESH (Post-Import) ---
+if [[ ${#investbrain_accounts[@]} -gt 0 && "${INVESTBRAIN_IMPORT:-}" == "true" ]]; then
+    log_info "🔄 Refreshing Investbrain market data and dividends..."
+    docker exec investbrain-app php artisan refresh:market-data || log_warn "Failed to refresh market-data"
+    docker exec investbrain-app php artisan refresh:dividend-data || log_warn "Failed to refresh dividend-data"
+fi
 
 for prefix in "${!investbrain_accounts[@]}"; do
   log_debug "Processing Investbrain account: $prefix"
