@@ -211,6 +211,10 @@ def fetch_existing_fingerprints(portfolio_id: str, api_url: str, headers: dict) 
                 price_val = tx.get('cost_basis') if tx_type == 'BUY' else tx.get('sale_price')
                 price = round(float(price_val or 0), 4)
                 
+                # Normalize Investbrain GBX prices to GBP to match our CSV parser
+                if tx.get('currency') == 'GBX':
+                    price = round(price / 100.0, 4)
+                
                 fingerprints.add((symbol, tx_type, date, qty, price))
                 
             meta = data.get('meta', {})
