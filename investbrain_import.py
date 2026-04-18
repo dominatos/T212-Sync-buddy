@@ -31,15 +31,59 @@ _LOG_LEVEL_NAMES = {"TRACE": 0, "DEBUG": 1, "INFO": 2, "WARN": 3, "ERROR": 4, "F
 _LOG_LEVEL = _LOG_LEVEL_NAMES.get(os.getenv("T212_LOG_LEVEL", "INFO").upper(), 2)
 
 def _log(level: int, tag: str, msg: str):
+    """
+    Log a message to stdout when the configured log level is at or above `level`.
+    
+    Parameters:
+        level (int): Severity level required for this message to be emitted.
+        tag (str): Short identifier shown in square brackets before the message.
+        msg (str): Text of the log message to emit.
+    """
     if _LOG_LEVEL <= level:
         print(f"[{tag}] {msg}")
 
-def trace(msg: str): _log(0, "TRACE", msg)
-def debug(msg: str): _log(1, "DEBUG", msg)
-def info(msg: str):  _log(2, "INFO", msg)
-def warn(msg: str):  _log(3, "WARN", msg)
-def error(msg: str): _log(4, "ERROR", msg)
-def fatal(msg: str): _log(5, "FATAL", msg)
+def trace(msg: str): """
+Log a message at the TRACE level.
+
+Parameters:
+    msg (str): The message to log.
+"""
+_log(0, "TRACE", msg)
+def debug(msg: str): """
+Log a message at the debug verbosity level.
+
+Parameters:
+    msg (str): Message to log.
+"""
+_log(1, "DEBUG", msg)
+def info(msg: str):  """
+Log an informational message according to the configured log level.
+
+Parameters:
+    msg (str): Message text to log.
+"""
+_log(2, "INFO", msg)
+def warn(msg: str):  """
+Log a warning-level message.
+
+Parameters:
+    msg (str): The text to emit at the warning log level.
+"""
+_log(3, "WARN", msg)
+def error(msg: str): """
+Log a message at ERROR level.
+
+Parameters:
+    msg (str): The message to log.
+"""
+_log(4, "ERROR", msg)
+def fatal(msg: str): """
+Log a message at fatal severity.
+
+Parameters:
+    msg (str): The message to log.
+"""
+_log(5, "FATAL", msg)
 
 debug(f"Loading .env from: {_env_file}")
 trace(f".env exists: {os.path.exists(_env_file)}")
@@ -56,7 +100,21 @@ REQUEST_TIMEOUT = (30, 200)  # (connect_timeout, read_timeout)
 SAME_DAY_DELAY_SECONDS = float(os.getenv("INVESTBRAIN_SAME_DAY_DELAY_SECONDS", "2"))  # delay between same-symbol same-day transactions
 
 def get_investbrain_headers(api_token: str) -> dict:
-    """Creates Bearer token headers for Investbrain API requests."""
+    """
+    Create HTTP headers with a Bearer Authorization for Investbrain API.
+    
+    The provided token will have surrounding whitespace removed before being inserted
+    into the Authorization header.
+    
+    Parameters:
+        api_token (str): The API token to use for the Bearer Authorization. Surrounding
+            whitespace is stripped; empty or missing tokens produce an Authorization
+            header with an empty bearer value.
+    
+    Returns:
+        dict: HTTP headers including `Authorization: Bearer <token>`, `Content-Type: application/json`,
+        and `Accept: application/json`.
+    """
     # Strip whitespace from token - critical for .env file loading
     api_token = api_token.strip() if api_token else ""
     trace(f"Creating headers with token: set (length={len(api_token)})")
@@ -69,7 +127,17 @@ def get_investbrain_headers(api_token: str) -> dict:
     return headers
 
 def map_transaction_type(action: str) -> str:
-    """Maps Trading212 action to Investbrain transaction type."""
+    """
+    Map a Trading212 action string to the corresponding Investbrain transaction type.
+    
+    Recognizes case-insensitive action values: "market buy", "limit buy", "buy" → "BUY";
+    "market sell", "limit sell", "sell" → "SELL". Input is normalized by trimming
+    whitespace and lowercasing before matching.
+    
+    Returns:
+        'BUY' if the action denotes a buy, 'SELL' if the action denotes a sell,
+        `None` for non-trade or unrecognized actions.
+    """
     action_lower = action.lower().strip()
     if action_lower in ['market buy', 'limit buy', 'buy']:
         return 'BUY'
@@ -81,8 +149,15 @@ def map_transaction_type(action: str) -> str:
 
 def parse_csv_row(row: dict) -> dict:
     """
-    Parses a CSV row and maps it to Investbrain transaction format.
-    Returns None if the row should be skipped (non-trade actions).
+    Convert a Trading212 CSV row into an Investbrain transaction dictionary.
+    
+    Parses Action, Time, Ticker/ISIN, quantity, price, and currency; normalizes date to YYYY-MM-DD, adjusts GBX/GBp prices to GBP, and appends exchange suffixes for common markets. Returns None for non-trade actions or when required fields are missing or malformed.
+    
+    Parameters:
+        row (dict): A single CSV row as a mapping of column names to string values.
+    
+    Returns:
+        dict or None: Investbrain transaction payload with keys `symbol`, `date`, `transaction_type`, `quantity`, `currency`, and either `cost_basis` (for BUY) or `sale_price` (for SELL); `None` if the row should be skipped.
     """
     # Map Trading212 columns to Investbrain fields
     action = row.get('Action', '').strip()
@@ -198,16 +273,26 @@ def parse_csv_row(row: dict) -> dict:
 def fetch_existing_fingerprints(portfolio_id: str, api_url: str, headers: dict,
                                   max_retries: int = 3, backoff_base: float = 2.0) -> set:
     """
-    Fetches all existing transactions from Investbrain for the given portfolio to prevent duplicates.
-    Returns a set of tuples: (symbol, transaction_type, date, round(quantity, 5), round(price, 4))
-
-    Retry policy (finance-grade):
-      - Transient errors (HTTP 429, 5xx, network exceptions) are retried up to
-        max_retries times with exponential backoff (backoff_base * 2^attempt seconds).
-      - Permanent client errors (HTTP 4xx other than 429) raise RuntimeError immediately.
-      - If all retries are exhausted, raises RuntimeError so the caller aborts the
-        import rather than proceeding with partial deduplication data.
-    """
+                                  Fetch existing Investbrain transactions for a portfolio and return deduplication fingerprints.
+                                  
+                                  Retrieves all pages of transactions from the Investbrain `/api/transaction` endpoint and builds a set of tuples
+                                  (symbol, transaction_type, date (YYYY-MM-DD), rounded_quantity (5 decimals), rounded_price (4 decimals)).
+                                  Retries transient failures (HTTP 429, 5xx, and network errors) up to `max_retries` using exponential backoff
+                                  (backoff_base * 2**attempt). Permanent 4xx (other than 429) errors abort immediately.
+                                  
+                                  Parameters:
+                                      portfolio_id (str): Investbrain portfolio identifier.
+                                      api_url (str): Base Investbrain API URL.
+                                      headers (dict): HTTP headers to include (e.g., authorization).
+                                      max_retries (int): Maximum number of retry attempts for transient failures (default 3).
+                                      backoff_base (float): Base backoff seconds multiplied by 2**attempt for retries (default 2.0).
+                                  
+                                  Returns:
+                                      set: A set of tuples (symbol, transaction_type, date, quantity, price) used for deduplication.
+                                  
+                                  Raises:
+                                      RuntimeError: On permanent client errors or if transient retries are exhausted while fetching pages.
+                                  """
     fingerprints = set()
     page = 1
     info("🔍 Fetching existing Investbrain transactions for deduplication...")
@@ -292,8 +377,22 @@ def fetch_existing_fingerprints(portfolio_id: str, api_url: str, headers: dict,
 
 def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_token: str, validate_only: bool = False) -> tuple[int, int, int]:
     """
-    Imports transactions from CSV to Investbrain.
-    Returns (success_count, error_count, skipped_count)
+    Import Trading212 transactions from a CSV file into the Investbrain portfolio.
+    
+    Parses the CSV, normalizes and deduplicates transactions, applies the intraday BUY->D-1 workaround when needed, and posts each transaction to the Investbrain `/api/transaction` endpoint (unless `validate_only` is True, in which case imports are simulated and not sent).
+    
+    Parameters:
+        csv_path (str): Path to the Trading212 CSV file.
+        portfolio_id (str): Investbrain portfolio identifier to attach transactions to.
+        api_url (str): Base URL of the Investbrain API.
+        api_token (str): Bearer token used for Investbrain authentication.
+        validate_only (bool): If True, do not POST to the API; report which transactions would be imported.
+    
+    Returns:
+        tuple[int, int, int]: A tuple of (success_count, error_count, skipped_count) where
+            - success_count is the number of transactions successfully imported (or would be imported in validate mode),
+            - error_count is the number of transactions that failed to import,
+            - skipped_count is the number of rows skipped (non-trade, malformed, or deduplicated).
     """
     info(f"Processing CSV: {csv_path}")
     trace(f"import_to_investbrain called with:")
@@ -472,6 +571,14 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
     return success_count, error_count, skipped_count
 
 def main():
+    """
+    CLI entry point that parses command-line arguments, validates required configuration, runs the import process, and reports results.
+    
+    Parses positional and optional flags (CSV path, portfolio ID, API URL, API token, and validate-only mode), ensures the Investbrain API URL and token are available (via environment or flags), invokes the import workflow, logs summary counts, and returns an appropriate process exit code.
+    
+    Returns:
+        int: 0 on success (no import errors), 1 if required configuration is missing or any errors occurred during import.
+    """
     parser = argparse.ArgumentParser(description="Trading212 CSV → Investbrain API Importer")
     parser.add_argument("csv_file", help="Path to the Trading212 CSV file")
     parser.add_argument("portfolio_id", help="Investbrain portfolio ID")

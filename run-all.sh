@@ -11,6 +11,7 @@ fi
 # Log level: TRACE=0, DEBUG=1, INFO=2, WARN=3, ERROR=4, FATAL=5
 T212_LOG_LEVEL="${T212_LOG_LEVEL:-INFO}"
 
+# _log_level_num maps a log level name (TRACE|DEBUG|INFO|WARN|ERROR|FATAL) to its numeric priority (0..5), defaulting to 2 (INFO) for unknown values.
 _log_level_num() {
     case "$1" in
         TRACE) echo 0 ;; DEBUG) echo 1 ;; INFO) echo 2 ;;
@@ -21,14 +22,20 @@ _log_level_num() {
 
 _CURRENT_LEVEL=$(_log_level_num "$T212_LOG_LEVEL")
 
+# log_trace prints a `[TRACE]`-prefixed message when the current log level permits trace output, otherwise produces no output.
 log_trace() { [[ $_CURRENT_LEVEL -le 0 ]] && echo "[TRACE] $*"; return 0; }
+# log_debug prints a debug-level message when the configured log level is DEBUG or more verbose.
 log_debug() { [[ $_CURRENT_LEVEL -le 1 ]] && echo "[DEBUG] $*"; return 0; }
+# log_info prints an informational message prefixed with [INFO] when the current log level allows it.
 log_info()  { [[ $_CURRENT_LEVEL -le 2 ]] && echo "[INFO] $*";  return 0; }
+# log_warn prints a "[WARN]"-prefixed message when the current log level permits it.
 log_warn()  { [[ $_CURRENT_LEVEL -le 3 ]] && echo "[WARN] $*";  return 0; }
+# log_error prints an [ERROR] prefixed message when the current log level allows error messages.
 log_error() { [[ $_CURRENT_LEVEL -le 4 ]] && echo "[ERROR] $*"; return 0; }
+# log_fatal prints a fatal-level message prefixed with [FATAL].
 log_fatal() { echo "[FATAL] $*"; }
 
-# Countdown sleep function
+# countdown_sleep pauses execution for the given number of seconds and, when the log level is TRACE, prints a per-second "Sleeping Ns..." countdown to stdout.
 countdown_sleep() {
     local seconds=$1
     while [ $seconds -gt 0 ]; do
@@ -117,6 +124,7 @@ YAHOO_RATE_LIMIT_COOLDOWN_SECONDS="${YAHOO_RATE_LIMIT_COOLDOWN_SECONDS:-300}"
 YAHOO_RATE_LIMIT_CHECK_SYMBOL="${YAHOO_RATE_LIMIT_CHECK_SYMBOL:-AMZN}"
 YAHOO_RATE_LIMIT_FILE=".state/yahoo_rate_limit"
 
+# yahoo_rate_limit_active checks whether a Yahoo rate-limit marker file exists and its timestamp is still within the configured cooldown; returns 0 when active, 1 otherwise.
 yahoo_rate_limit_active() {
   [[ -f "$YAHOO_RATE_LIMIT_FILE" ]] || return 1
   last=$(cat "$YAHOO_RATE_LIMIT_FILE" 2>/dev/null)
@@ -128,11 +136,13 @@ yahoo_rate_limit_active() {
   return 1
 }
 
+# mark_yahoo_rate_limit writes the current epoch seconds to YAHOO_RATE_LIMIT_FILE, creating the file's parent directory if necessary.
 mark_yahoo_rate_limit() {
   mkdir -p "$(dirname "$YAHOO_RATE_LIMIT_FILE")"
   date +%s > "$YAHOO_RATE_LIMIT_FILE"
 }
 
+# check_yahoo_rate_limit_probe probes Yahoo Finance's chart API for the configured symbol and returns success when the response indicates rate limiting (HTTP 429 or body matching "too many requests", "rate limit", or "service unavailable"). It warns and returns failure if `curl` is not available.
 check_yahoo_rate_limit_probe() {
   if ! command -v curl >/dev/null 2>&1; then
     log_warn "curl not installed; skipping Yahoo rate-limit pre-check."
@@ -159,7 +169,16 @@ check_yahoo_rate_limit_probe() {
   return 1
 }
 
-# Function to process an account (either Ghostfolio or Investbrain)
+# process_account processes all CSV files for a given account prefix on either the `ghostfolio` or `investbrain` platform — it converts/imports files, verifies results, quarantines failures, and archives CSVs once all required platforms have succeeded.
+# Arguments:
+#   prefix      — CSV/account prefix (matches input/${prefix}-*.csv)
+#   account_id  — target Ghostfolio account ID or Investbrain portfolio ID
+#   platform    — either "ghostfolio" or "investbrain"
+# Side effects:
+#   - Writes temporary files in temp/, out/, cache/, and .state/
+#   - On conversion/import failures the original CSV is moved to input/quarantine/ (or input/unverified/ for verification errors)
+#   - When all required platforms have successfully processed a CSV it is moved to input/done/
+#   - May set the global variable had_failure=1 on any error and may mark Yahoo rate-limit state for Ghostfolio conversions.
 process_account() {
   local prefix="$1"
   local account_id="$2"

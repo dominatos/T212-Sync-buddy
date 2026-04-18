@@ -16,7 +16,8 @@ mkdir -p "$OUT_DIR"
 
 # =========================
 # FUNCTIONS
-# =========================
+# countdown_sleep sleeps for the specified number of seconds while printing a one-second countdown status.
+# seconds is the duration in seconds (integer >= 0).
 
 countdown_sleep() {
     local seconds=$1
@@ -28,18 +29,22 @@ countdown_sleep() {
     echo -e "\rSleeping 0s... Done."
 }
 
+# log_info writes an INFO-level timestamped message to stdout.
 log_info() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO] $*"
 }
 
+# log_error writes the given arguments as an error message prefixed with a timestamp and `[ERROR]` to stderr.
 log_error() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $*" >&2
 }
 
+# log_warn prints a timestamped warning message prefixed with `[WARN]` to stderr.
 log_warn() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] [WARN] $*" >&2
 }
 
+# cleanup_old_files removes oldest quote_*.json files from OUT_DIR, keeping only the most recent MAX_FILES.
 cleanup_old_files() {
     local count
     count=$(find "$OUT_DIR" -name "quote_*.json" | wc -l)
@@ -49,6 +54,7 @@ cleanup_old_files() {
     fi
 }
 
+# fetch_quotes retrieves the given URL and writes the response body to the specified output file, echoing the HTTP status code (`000` on curl/network failure).
 fetch_quotes() {
     local url="$1"
     local output_file="$2"
@@ -59,6 +65,15 @@ fetch_quotes() {
     echo "$http_code"
 }
 
+# validate_response validates the HTTP status and ensures the response file contains valid JSON.
+# validate_response reads two arguments: the path to the response file and the HTTP status code.
+# Returns:
+#   0 if the HTTP code is 200 and the response appears to be valid JSON.
+#   1 if the HTTP code indicates rate limiting (429).
+#   2 if the HTTP code indicates unauthorized access (401 or 403).
+#   3 if the HTTP code is 000 indicating a network failure or timeout.
+#   4 for any other HTTP error or if the response is missing or invalid JSON.
+# The function uses `jq` to validate JSON when available; otherwise it performs a minimal check for a `{` character.
 validate_response() {
     local response_file="$1"
     local http_code="$2"
@@ -100,6 +115,7 @@ validate_response() {
     return 0
 }
 
+# send_to_telegram sends a text message to the Telegram chat configured by TG_TOKEN and CHAT_ID, logs the outcome, returns 0 when skipped or sent successfully, and returns 1 on failure or when no message is provided.
 send_to_telegram() {
     local text="$1"
     
@@ -126,6 +142,7 @@ send_to_telegram() {
     fi
 }
 
+# handle_backoff logs the backoff reason and waits for the specified number of seconds.
 handle_backoff() {
     local reason="$1"
     local backoff_seconds="$2"
