@@ -186,7 +186,7 @@ while true; do
 
     log_info "Saved: $FILE"
     if [[ "$WAS_LIMITED" == "true" ]]; then
-        send_to_telegram "Yahoo API rate limit has been removed! ✅"
+        send_to_telegram "Yahoo API rate limit has been removed! ✅" || true
         WAS_LIMITED=false
     fi
     cleanup_old_files
