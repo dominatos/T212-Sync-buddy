@@ -162,6 +162,22 @@ def parse_csv_row(row: dict) -> dict:
     if currency == 'EUR' and '.' not in symbol and symbol != 'EUR':
         symbol = f"{symbol}.DE"
 
+    # Swiss stocks in Yahoo Finance require a .SW suffix.
+    if currency == 'CHF' and '.' not in symbol:
+        symbol = f"{symbol}.SW"
+
+    # Canadian stocks in Yahoo Finance require a .TO suffix.
+    if currency == 'CAD' and '.' not in symbol:
+        symbol = f"{symbol}.TO"
+
+    # Australian stocks in Yahoo Finance require an .AX suffix.
+    if currency == 'AUD' and '.' not in symbol:
+        symbol = f"{symbol}.AX"
+
+    # Japanese stocks in Yahoo Finance require a .T suffix.
+    if currency == 'JPY' and '.' not in symbol:
+        symbol = f"{symbol}.T"
+
     # Build transaction data
     transaction = {
         'symbol': symbol,

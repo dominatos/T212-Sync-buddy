@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-CSV ISIN Preprocessor for Trading212 Exports
+CSV Ticker Mapper for Trading212 Exports
 
-Replaces ticker symbols with ISINs for stocks that don't have proper price lookup
-in Ghostfolio (UK and IE stocks, remapped symbols). This ensures NYSE/LSE stocks
-resolve correctly via ISIN-based price lookups.
+Replaces problematic ticker symbols with their direct Yahoo Finance equivalents 
+(e.g. appending .L for LSE stocks) before passing them to the Ghostfolio converter.
+This ensures they resolve correctly, bypassing Ghostfolio's unreliable ISIN lookup.
 
 Usage:
   python3 preprocess_isin.py <input.csv> <output.csv>
@@ -45,25 +45,8 @@ TICKER_TO_ISIN = {v: k for k, v in ISIN_TO_TICKER.items()}
 PROBLEM_SUFFIXES = {'.L', '.XC'}
 REMAPPED_SYMBOLS = {'VEVEL.XC', 'VWRLL.XC'}
 
-def should_replace(ticker: str, isin: str) -> bool:
-    """Check if this ticker should be replaced with ISIN."""
-    if not isin or not ticker:
-        return False
-
-    # Replace if has problematic suffix or is remapped
-    if any(ticker.endswith(s) for s in PROBLEM_SUFFIXES):
-        return True
-    if ticker in REMAPPED_SYMBOLS:
-        return True
-
-    # Replace if ISIN exists and ticker doesn't (ie: VEVE without .L should use ISIN)
-    if isin in ISIN_TO_TICKER and ticker == ISIN_TO_TICKER[isin]:
-        return True
-
-    return False
-
 def process_csv(input_file: str, output_file: str):
-    """Process CSV: replace problematic tickers with ISINs."""
+    """Process CSV: map tickers explicitly or automatically apply Yahoo Finance suffixes."""
     with open(input_file, 'r', encoding='utf-8') as infile:
         reader = csv.DictReader(infile)
 
@@ -76,14 +59,52 @@ def process_csv(input_file: str, output_file: str):
         for row in reader:
             ticker = row.get('Ticker', '').strip()
             isin = row.get('ISIN', '').strip()
+            currency = row.get('Currency (Price / share)', row.get('Currency', '')).strip()
 
-            if should_replace(ticker, isin):
-                if isin:
-                    old_ticker = ticker
-                    # Replace ticker with ISIN in format: ISIN_<CODE>
-                    row['Ticker'] = f"ISIN_{isin}"
-                    print(f"  ℹ️  {old_ticker:15} → ISIN_{isin}")
+            if not ticker:
+                rows_to_write.append(row)
+                continue
+
+            # 1. Explicit Mapping Override
+            if isin and isin in ISIN_TO_TICKER:
+                new_ticker = ISIN_TO_TICKER[isin]
+                if ticker != new_ticker:
+                    row['Ticker'] = new_ticker
+                    print(f"  ℹ️  {ticker:15} → {new_ticker:15} (Explicit Map)")
                     replaced_count += 1
+            else:
+                # 2. Dynamic Auto-Suffix logic for unmapped stocks
+                if currency in ['GBP', 'GBX', 'GBp'] and '.' not in ticker:
+                    new_ticker = f"{ticker}.L"
+                    row['Ticker'] = new_ticker
+                    print(f"  ℹ️  {ticker:15} → {new_ticker:15} (Auto-Suffix .L)")
+                    replaced_count += 1
+                elif currency == 'EUR' and '.' not in ticker and ticker != 'EUR':
+                    new_ticker = f"{ticker}.DE"
+                    row['Ticker'] = new_ticker
+                    print(f"  ℹ️  {ticker:15} → {new_ticker:15} (Auto-Suffix .DE)")
+                    replaced_count += 1
+                elif currency == 'CHF' and '.' not in ticker:
+                    new_ticker = f"{ticker}.SW"
+                    row['Ticker'] = new_ticker
+                    print(f"  ℹ️  {ticker:15} → {new_ticker:15} (Auto-Suffix .SW)")
+                    replaced_count += 1
+                elif currency == 'CAD' and '.' not in ticker:
+                    new_ticker = f"{ticker}.TO"
+                    row['Ticker'] = new_ticker
+                    print(f"  ℹ️  {ticker:15} → {new_ticker:15} (Auto-Suffix .TO)")
+                    replaced_count += 1
+                elif currency == 'AUD' and '.' not in ticker:
+                    new_ticker = f"{ticker}.AX"
+                    row['Ticker'] = new_ticker
+                    print(f"  ℹ️  {ticker:15} → {new_ticker:15} (Auto-Suffix .AX)")
+                    replaced_count += 1
+                elif currency == 'JPY' and '.' not in ticker:
+                    new_ticker = f"{ticker}.T"
+                    row['Ticker'] = new_ticker
+                    print(f"  ℹ️  {ticker:15} → {new_ticker:15} (Auto-Suffix .T)")
+                    replaced_count += 1
+                # If there's a malformed upstream suffix, clean it up (optional, but handled by Ghostfolio mostly)
 
             rows_to_write.append(row)
 
@@ -109,7 +130,7 @@ if __name__ == "__main__":
 
     try:
         count = process_csv(input_file, output_file)
-        print(f"✅ Preprocessed CSV: {count} tickers replaced with ISINs")
+        print(f"✅ Preprocessed CSV: {count} tickers mapped to Yahoo Finance symbols")
         print(f"   Output: {output_file}")
     except Exception as e:
         print(f"❌ Error: {e}")
