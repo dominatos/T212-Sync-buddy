@@ -79,7 +79,7 @@ The universal orchestrator for processing CSV exports.
 
 ### investbrain_import.py
 A sophisticated importer designed to handle Investbrain-specific edge cases:
-- **Intraday Workaround**: Automatically detects same-day trade conflicts and implements a sequential delay/shifting logic to bypass Investbrain validation bugs.
+- **Intraday Workaround**: Automatically detects same-day trade conflicts and implements a sequential delay/shifting logic to bypass Investbrain validation bugs ([#195](https://github.com/investbrainapp/investbrain/issues/195)).
 - **Symbol Mapping**: Auto-appends exchange suffixes (`.DE`, `.L`) to ensure compatibility with Yahoo Finance.
 - **Error Handling**: Detailed reporting of HTTP 422 validation errors.
 
