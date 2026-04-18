@@ -179,10 +179,18 @@ def parse_csv_row(row: dict) -> dict:
 
     return transaction
 
-def fetch_existing_fingerprints(portfolio_id: str, api_url: str, headers: dict) -> set:
+def fetch_existing_fingerprints(portfolio_id: str, api_url: str, headers: dict,
+                                  max_retries: int = 3, backoff_base: float = 2.0) -> set:
     """
     Fetches all existing transactions from Investbrain for the given portfolio to prevent duplicates.
     Returns a set of tuples: (symbol, transaction_type, date, round(quantity, 5), round(price, 4))
+
+    Retry policy (finance-grade):
+      - Transient errors (HTTP 429, 5xx, network exceptions) are retried up to
+        max_retries times with exponential backoff (backoff_base * 2^attempt seconds).
+      - Permanent client errors (HTTP 4xx other than 429) raise RuntimeError immediately.
+      - If all retries are exhausted, raises RuntimeError so the caller aborts the
+        import rather than proceeding with partial deduplication data.
     """
     fingerprints = set()
     page = 1
@@ -191,41 +199,77 @@ def fetch_existing_fingerprints(portfolio_id: str, api_url: str, headers: dict) 
     while True:
         url = f"{api_url.rstrip('/')}/api/transaction?portfolio_id={portfolio_id}&page={page}"
         trace(f"Fetching page {page} of existing transactions...")
-        try:
-            response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
-            if response.status_code != 200:
-                warn(f"Failed to fetch transactions (HTTP {response.status_code}). Deduplication may be incomplete.")
-                break
-                
-            data = response.json()
-            transactions = data.get('data', [])
-            if not transactions:
-                break
-                
-            for tx in transactions:
-                symbol = tx.get('symbol')
-                tx_type = tx.get('transaction_type')
-                # Date comes back as 'YYYY-MM-DD' from API
-                date = tx.get('date', '')[:10]
-                qty = round(float(tx.get('quantity') or 0), 5)
-                price_val = tx.get('cost_basis') if tx_type == 'BUY' else tx.get('sale_price')
-                price = round(float(price_val or 0), 4)
-                
-                # Normalize Investbrain GBX prices to GBP to match our CSV parser
-                if tx.get('currency') == 'GBX':
-                    price = round(price / 100.0, 4)
-                
-                fingerprints.add((symbol, tx_type, date, qty, price))
-                
-            meta = data.get('meta', {})
-            # Stop if we've reached the last page or next link is null
-            if meta.get('current_page') == meta.get('last_page') or not data.get('links', {}).get('next'):
-                break
-            page += 1
-            
-        except Exception as e:
-            warn(f"Error fetching existing transactions: {e}")
+
+        # --- Retry loop for transient failures on this page ---
+        last_error = None
+        response = None
+        for attempt in range(max_retries + 1):
+            try:
+                response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+
+                if response.status_code == 200:
+                    # Success — clear any previous transient error and exit retry loop
+                    last_error = None
+                    break
+                elif response.status_code == 429 or response.status_code >= 500:
+                    # Transient server / rate-limit error — retry with backoff
+                    last_error = f"HTTP {response.status_code}"
+                    if attempt < max_retries:
+                        wait = backoff_base * (2 ** attempt)
+                        warn(f"Transient error ({last_error}) fetching transactions page {page}, "
+                             f"retry {attempt + 1}/{max_retries} in {wait}s")
+                        time.sleep(wait)
+                        continue
+                    # Retries exhausted — fall through to raise below
+                else:
+                    # Permanent client error (4xx other than 429) — abort deterministically
+                    raise RuntimeError(
+                        f"Permanent error fetching existing transactions: HTTP {response.status_code}"
+                    )
+
+            except requests.RequestException as e:
+                # Network-level error (timeout, DNS, connection reset, etc.) — retry with backoff
+                last_error = str(e)
+                if attempt < max_retries:
+                    wait = backoff_base * (2 ** attempt)
+                    warn(f"Network error fetching transactions page {page}: {e}, "
+                         f"retry {attempt + 1}/{max_retries} in {wait}s")
+                    time.sleep(wait)
+                    continue
+                # Retries exhausted — fall through to raise below
+
+        # If all retries exhausted, raise so the import aborts cleanly
+        if last_error is not None:
+            raise RuntimeError(
+                f"Failed to fetch existing transactions after {max_retries} retries: {last_error}"
+            )
+
+        # --- Process the successful response for this page ---
+        data = response.json()
+        transactions = data.get('data', [])
+        if not transactions:
             break
+            
+        for tx in transactions:
+            symbol = tx.get('symbol')
+            tx_type = tx.get('transaction_type')
+            # Date comes back as 'YYYY-MM-DD' from API
+            date = tx.get('date', '')[:10]
+            qty = round(float(tx.get('quantity') or 0), 5)
+            price_val = tx.get('cost_basis') if tx_type == 'BUY' else tx.get('sale_price')
+            price = round(float(price_val or 0), 4)
+            
+            # Normalize Investbrain GBX prices to GBP to match our CSV parser
+            if tx.get('currency') == 'GBX':
+                price = round(price / 100.0, 4)
+            
+            fingerprints.add((symbol, tx_type, date, qty, price))
+            
+        meta = data.get('meta', {})
+        # Stop if we've reached the last page or next link is null
+        if meta.get('current_page') == meta.get('last_page') or not data.get('links', {}).get('next'):
+            break
+        page += 1
             
     debug(f"Found {len(fingerprints)} existing transactions for deduplication.")
     return fingerprints
@@ -250,7 +294,13 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
 
     existing_fingerprints = set()
     if not validate_only:
-        existing_fingerprints = fetch_existing_fingerprints(portfolio_id, api_url, headers)
+        try:
+            existing_fingerprints = fetch_existing_fingerprints(portfolio_id, api_url, headers)
+        except RuntimeError as e:
+            # Deduplication must succeed fully or fail deterministically.
+            # Proceeding without complete fingerprints risks creating duplicate transactions.
+            error(f"Aborting import — deduplication fetch failed: {e}")
+            return 0, 1, 0
 
     try:
         with open(csv_path, 'r', encoding='utf-8') as f:
