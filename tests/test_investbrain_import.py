@@ -338,5 +338,151 @@ class TestImportToInvestbrainDedupFailure(unittest.TestCase):
             os.unlink(csv_path)
 
 
+# =============================================================================
+# 3. import_to_investbrain — transaction POST retry logic
+# =============================================================================
+
+# Helper: creates a minimal CSV temp file with one BUY trade
+def _create_test_csv():
+    """Creates a temp CSV file with a single AAPL BUY for use in POST retry tests."""
+    f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+    f.write("Action,Time,Ticker,No. of shares,Price / share,Currency (Price / share)\n")
+    f.write("Market buy,2025-01-15 10:00:00,AAPL,10,150.00,USD\n")
+    f.close()
+    return f.name
+
+
+class TestTransactionPostRetry(unittest.TestCase):
+    """Tests for retry behavior on individual transaction POST requests."""
+
+    @patch("investbrain_import.time.sleep")
+    @patch("investbrain_import.requests.post")
+    @patch("investbrain_import.fetch_existing_fingerprints", return_value=set())
+    def test_post_retry_on_429_then_success(self, mock_fetch, mock_post, mock_sleep):
+        """Retries on HTTP 429 with exponential backoff, then succeeds.
+
+        Verifies that a transient rate-limit response on POST triggers a retry
+        with the correct backoff delay, and the subsequent 201 is counted as success.
+        """
+        mock_post.side_effect = [
+            _mock_response(429),          # Attempt 1: rate-limited
+            _mock_response(201, {}),      # Attempt 2: success
+        ]
+        csv_path = _create_test_csv()
+        try:
+            success, errors, skipped = investbrain_import.import_to_investbrain(
+                csv_path, PORTFOLIO, API_URL, "test-token"
+            )
+            self.assertEqual(success, 1)
+            self.assertEqual(errors, 0)
+            self.assertEqual(mock_post.call_count, 2)
+            # Backoff: 2.0 * (2^0) = 2.0 seconds
+            mock_sleep.assert_called_with(2.0)
+        finally:
+            os.unlink(csv_path)
+
+    @patch("investbrain_import.time.sleep")
+    @patch("investbrain_import.requests.post")
+    @patch("investbrain_import.fetch_existing_fingerprints", return_value=set())
+    def test_post_retry_on_500_then_success(self, mock_fetch, mock_post, mock_sleep):
+        """Retries on HTTP 500 with exponential backoff, then succeeds.
+
+        Verifies that transient server errors on POST trigger retries,
+        and success on a later attempt is counted correctly.
+        """
+        mock_post.side_effect = [
+            _mock_response(500),          # Attempt 1: server error
+            _mock_response(502),          # Attempt 2: bad gateway
+            _mock_response(201, {}),      # Attempt 3: success
+        ]
+        csv_path = _create_test_csv()
+        try:
+            success, errors, skipped = investbrain_import.import_to_investbrain(
+                csv_path, PORTFOLIO, API_URL, "test-token"
+            )
+            self.assertEqual(success, 1)
+            self.assertEqual(errors, 0)
+            self.assertEqual(mock_post.call_count, 3)
+            # Backoff: 2.0*1=2.0s, then 2.0*2=4.0s
+            mock_sleep.assert_has_calls([call(2.0), call(4.0)])
+        finally:
+            os.unlink(csv_path)
+
+    @patch("investbrain_import.time.sleep")
+    @patch("investbrain_import.requests.post")
+    @patch("investbrain_import.fetch_existing_fingerprints", return_value=set())
+    def test_post_retry_on_network_error_then_success(self, mock_fetch, mock_post, mock_sleep):
+        """Retries on network exception (ConnectionError), then succeeds.
+
+        Verifies that transient network-level failures on POST are retried
+        with exponential backoff, matching the behavior for HTTP 429/5xx.
+        """
+        mock_post.side_effect = [
+            requests.exceptions.ConnectionError("Connection refused"),
+            _mock_response(201, {}),      # Attempt 2: success
+        ]
+        csv_path = _create_test_csv()
+        try:
+            success, errors, skipped = investbrain_import.import_to_investbrain(
+                csv_path, PORTFOLIO, API_URL, "test-token"
+            )
+            self.assertEqual(success, 1)
+            self.assertEqual(errors, 0)
+            self.assertEqual(mock_post.call_count, 2)
+            mock_sleep.assert_called_once_with(2.0)
+        finally:
+            os.unlink(csv_path)
+
+    @patch("investbrain_import.time.sleep")
+    @patch("investbrain_import.requests.post")
+    @patch("investbrain_import.fetch_existing_fingerprints", return_value=set())
+    def test_post_permanent_4xx_no_retry(self, mock_fetch, mock_post, mock_sleep):
+        """Counts error immediately on permanent 4xx (non-429) — no retry.
+
+        A 400 Bad Request means the payload is invalid; retrying the same
+        payload would be pointless. The error is counted and import continues.
+        """
+        resp = _mock_response(400)
+        resp.text = "Validation failed"
+        mock_post.return_value = resp
+        csv_path = _create_test_csv()
+        try:
+            success, errors, skipped = investbrain_import.import_to_investbrain(
+                csv_path, PORTFOLIO, API_URL, "test-token"
+            )
+            self.assertEqual(success, 0)
+            self.assertEqual(errors, 1)
+            # Only one attempt — no retries for permanent errors
+            self.assertEqual(mock_post.call_count, 1)
+            # No backoff sleep should have occurred
+            mock_sleep.assert_not_called()
+        finally:
+            os.unlink(csv_path)
+
+    @patch("investbrain_import.time.sleep")
+    @patch("investbrain_import.requests.post")
+    @patch("investbrain_import.fetch_existing_fingerprints", return_value=set())
+    def test_post_retry_exhaustion_counts_error(self, mock_fetch, mock_post, mock_sleep):
+        """Counts error after all POST retries are exhausted.
+
+        Verifies that after max_post_retries+1 total attempts, the transaction
+        is counted as an error and the import continues (does not abort).
+        """
+        resp = _mock_response(503)
+        resp.text = "Service Unavailable"
+        mock_post.return_value = resp
+        csv_path = _create_test_csv()
+        try:
+            success, errors, skipped = investbrain_import.import_to_investbrain(
+                csv_path, PORTFOLIO, API_URL, "test-token"
+            )
+            self.assertEqual(success, 0)
+            self.assertEqual(errors, 1)
+            # Initial + 3 retries = 4 total calls
+            self.assertEqual(mock_post.call_count, 4)
+        finally:
+            os.unlink(csv_path)
+
+
 if __name__ == "__main__":
     unittest.main()

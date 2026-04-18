@@ -382,23 +382,68 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                     success_count += 1
                     continue
 
-                # Send to Investbrain API
-                try:
-                    url = f"{api_url.rstrip('/')}/api/transaction"
-                    trace(f"POST transaction {row_num}: {transaction.get('symbol')} {transaction.get('transaction_type')}")
+                # Send to Investbrain API — with retry for transient failures
+                # Retry policy (consistent with fetch_existing_fingerprints):
+                #   - Transient errors (HTTP 429, 5xx, network exceptions): retry up to
+                #     max_post_retries times with exponential backoff.
+                #   - Permanent client errors (4xx other than 429): count as error immediately.
+                #   - Retries exhausted: count as error, continue to next transaction
+                #     (one failed POST should not block the rest of the import).
+                max_post_retries = 3
+                post_backoff_base = 2.0
+                url = f"{api_url.rstrip('/')}/api/transaction"
+                post_last_error = None
+                post_succeeded = False
 
-                    response = requests.post(url, json=transaction, headers=headers, timeout=REQUEST_TIMEOUT)
-                    trace(f"  Response: {response.status_code}")
+                for post_attempt in range(max_post_retries + 1):
+                    try:
+                        trace(f"POST transaction {row_num}: {transaction.get('symbol')} "
+                              f"{transaction.get('transaction_type')} (attempt {post_attempt + 1})")
 
-                    if response.status_code in [200, 201]:
-                        info(f"Imported: {transaction['symbol']} {transaction['transaction_type']} {transaction['quantity']} @ {transaction.get('cost_basis', transaction.get('sale_price'))} {transaction['currency']}")
-                        success_count += 1
-                    else:
-                        error(f"Failed to import row {row_num}: HTTP {response.status_code} - {response.text}")
-                        error_count += 1
+                        response = requests.post(url, json=transaction, headers=headers,
+                                                 timeout=REQUEST_TIMEOUT)
+                        trace(f"  Response: {response.status_code}")
 
-                except requests.RequestException as e:
-                    error(f"Network error importing row {row_num}: {e}")
+                        if response.status_code in [200, 201]:
+                            # Success — record and break out of retry loop
+                            info(f"Imported: {transaction['symbol']} {transaction['transaction_type']} "
+                                 f"{transaction['quantity']} @ "
+                                 f"{transaction.get('cost_basis', transaction.get('sale_price'))} "
+                                 f"{transaction['currency']}")
+                            success_count += 1
+                            post_succeeded = True
+                            break
+                        elif response.status_code == 429 or response.status_code >= 500:
+                            # Transient server / rate-limit error — retry with backoff
+                            post_last_error = f"HTTP {response.status_code} - {response.text}"
+                            if post_attempt < max_post_retries:
+                                wait = post_backoff_base * (2 ** post_attempt)
+                                warn(f"Transient error ({response.status_code}) importing row {row_num}, "
+                                     f"retry {post_attempt + 1}/{max_post_retries} in {wait}s")
+                                time.sleep(wait)
+                                continue
+                            # Retries exhausted — fall through
+                        else:
+                            # Permanent client error (4xx other than 429) — no retry
+                            error(f"Failed to import row {row_num}: HTTP {response.status_code} - {response.text}")
+                            error_count += 1
+                            post_succeeded = True  # Flag to skip exhaustion block below
+                            break
+
+                    except requests.RequestException as e:
+                        # Network-level error — retry with backoff
+                        post_last_error = str(e)
+                        if post_attempt < max_post_retries:
+                            wait = post_backoff_base * (2 ** post_attempt)
+                            warn(f"Network error importing row {row_num}: {e}, "
+                                 f"retry {post_attempt + 1}/{max_post_retries} in {wait}s")
+                            time.sleep(wait)
+                            continue
+                        # Retries exhausted — fall through
+
+                # If all retries were exhausted without success or permanent error
+                if not post_succeeded and post_last_error is not None:
+                    error(f"Failed to import row {row_num} after {max_post_retries} retries: {post_last_error}")
                     error_count += 1
 
     except FileNotFoundError:
