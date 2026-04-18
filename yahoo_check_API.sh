@@ -101,12 +101,28 @@ validate_response() {
 }
 
 send_to_telegram() {
-    local file="$1"
-    if command -v tg_send >/dev/null 2>&1; then
-        tg_send "$file"
-        log_info "Sent to Telegram"
+    local text="$1"
+    
+    if [[ -z "${TG_TOKEN:-}" || -z "${CHAT_ID:-}" ]]; then
+        log_warn "TG_TOKEN or CHAT_ID not set, skipping Telegram"
+        return 0
+    fi
+
+    if [[ -z "$text" ]]; then
+        log_error "No message provided for Telegram"
+        return 1
+    fi
+
+    # Send message using Telegram Bot API
+    if curl -sS --fail-with-body \
+        -d "chat_id=$CHAT_ID" \
+        -d "text=$text" \
+        "https://api.telegram.org/bot$TG_TOKEN/sendMessage" >/dev/null 2>&1; then
+        
+        log_info "Sent to Telegram: $text"
     else
-        log_warn "tg_send not found, skipping Telegram"
+        log_error "Failed to send to Telegram: $text"
+        return 1
     fi
 }
 
@@ -129,6 +145,7 @@ URL="https://query1.finance.yahoo.com/v8/finance/spark?symbols=${SYMBOLS}&range=
 
 log_info "Starting Yahoo watch loop (interval: ${INTERVAL}s, symbols: $SYMBOLS)"
 
+WAS_LIMITED=false
 while true; do
     TIMESTAMP=$(date +%Y%m%d_%H%M%S)
     FILE="${OUT_DIR}/quote_${TIMESTAMP}.json"
@@ -139,7 +156,10 @@ while true; do
 
     if ! validate_response "$FILE" "$HTTP_CODE"; then
         case $? in
-            1) handle_backoff "rate limit" "$BACKOFF_RATE_LIMIT" ;;
+            1) 
+                WAS_LIMITED=true
+                handle_backoff "rate limit" "$BACKOFF_RATE_LIMIT" 
+                ;;
             2) handle_backoff "unauthorized" "$BACKOFF_UNAUTHORIZED" ;;
             3) handle_backoff "network failure" "$BACKOFF_NETWORK" ;;
             *) handle_backoff "other error" "$INTERVAL" ;;
@@ -148,7 +168,10 @@ while true; do
     fi
 
     log_info "Saved: $FILE"
-    tg_send "$FILE"
+    if [[ "$WAS_LIMITED" == "true" ]]; then
+        send_to_telegram "Yahoo API rate limit has been removed! ✅"
+        WAS_LIMITED=false
+    fi
     cleanup_old_files
 
     log_info "Sleeping ${INTERVAL}s..."
