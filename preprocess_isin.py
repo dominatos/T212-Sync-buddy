@@ -46,7 +46,18 @@ PROBLEM_SUFFIXES = {'.L', '.XC'}
 REMAPPED_SYMBOLS = {'VEVEL.XC', 'VWRLL.XC'}
 
 def process_csv(input_file: str, output_file: str):
-    """Process CSV: map tickers explicitly or automatically apply Yahoo Finance suffixes."""
+    """
+    Map tickers in a Trading212 export CSV to Yahoo Finance symbols and write the transformed rows to the specified output CSV.
+    
+    Processes each row in input_file: if an ISIN is present and mapped in `ISIN_TO_TICKER`, replaces the `Ticker` with the mapped symbol; otherwise, when the ticker lacks a dot, appends an exchange suffix based on the row currency (e.g., GBP→.L, EUR→.DE, CHF→.SW, CAD→.TO, AUD→.AX, JPY→.T). Rows with an empty `Ticker` are written unchanged.
+    
+    Parameters:
+        input_file (str): Path to the input CSV file to read.
+        output_file (str): Path where the transformed CSV will be written.
+    
+    Returns:
+        int: Number of tickers that were modified (explicit ISIN mappings or auto-suffix replacements).
+    """
     with open(input_file, 'r', encoding='utf-8') as infile:
         reader = csv.DictReader(infile)
 

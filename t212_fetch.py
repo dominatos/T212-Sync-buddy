@@ -31,18 +31,70 @@ _LOG_LEVEL_NAMES = {"TRACE": 0, "DEBUG": 1, "INFO": 2, "WARN": 3, "ERROR": 4, "F
 _LOG_LEVEL = _LOG_LEVEL_NAMES.get(os.getenv("T212_LOG_LEVEL", "INFO").upper(), 2)
 
 def _log(level: int, tag: str, msg: str):
+    """
+    Log a tagged message to stdout if the current log level permits it.
+    
+    Parameters:
+        level (int): Numeric verbosity level required for this message to be emitted.
+        tag (str): Short tag shown in square brackets before the message (e.g., "INFO").
+        msg (str): The message text to print.
+    """
     if _LOG_LEVEL <= level:
         print(f"[{tag}] {msg}", flush=True)
 
-def trace(msg: str): _log(0, "TRACE", msg)
-def debug(msg: str): _log(1, "DEBUG", msg)
-def info(msg: str):  _log(2, "INFO", msg)
-def warn(msg: str):  _log(3, "WARN", msg)
-def error(msg: str): _log(4, "ERROR", msg)
-def fatal(msg: str): _log(5, "FATAL", msg)
+def trace(msg: str): """
+Log a message at the TRACE level.
+
+Parameters:
+    msg (str): The message to log.
+"""
+_log(0, "TRACE", msg)
+def debug(msg: str): """
+Log a message at the DEBUG verbosity level.
+
+Outputs the provided message tagged with "DEBUG" when debug-level logging is enabled.
+
+Parameters:
+    msg (str): The message to log.
+"""
+_log(1, "DEBUG", msg)
+def info(msg: str):  """
+Log a message at the INFO level.
+
+Parameters:
+	msg (str): The message text to emit with INFO severity.
+"""
+_log(2, "INFO", msg)
+def warn(msg: str):  """
+Log a message with WARN severity, honoring the configured log level.
+
+Parameters:
+	msg (str): Text of the warning message to emit.
+"""
+_log(3, "WARN", msg)
+def error(msg: str): """
+Log a message at the ERROR level.
+
+Parameters:
+    msg (str): The message to log.
+"""
+_log(4, "ERROR", msg)
+def fatal(msg: str): """
+Log a message at the fatal level using the "FATAL" tag.
+
+Parameters:
+    msg (str): The message text to log.
+"""
+_log(5, "FATAL", msg)
 
 # Countdown sleep function
 def countdown_sleep(seconds):
+    """
+    Sleep for the given number of seconds, pausing in one-second increments and (when TRACE logging is enabled) printing a per-second countdown.
+    
+    Parameters:
+        seconds (int): Total seconds to sleep; sleeps in 1-second intervals and updates the optional countdown display.
+    """
     for i in range(seconds, 0, -1):
         if _LOG_LEVEL <= 0:  # TRACE only
             print(f"Sleeping {i}s...", end='\r', flush=True)
@@ -83,8 +135,12 @@ os.makedirs(INPUT_DIR, exist_ok=True)
 
 def has_investbrain_accounts() -> bool:
     """
-    Checks if any Investbrain accounts are configured in .env.
-    Returns True if at least one PREFIX_INVESTBRAIN_PORTFOLIO_ID is found.
+    Determine whether any Investbrain portfolio IDs are present in the process environment.
+    
+    Scans environment variable names for keys ending with `_INVESTBRAIN_PORTFOLIO_ID` and treats any non-empty value as configured.
+    
+    Returns:
+        bool: `True` if at least one `<PREFIX>_INVESTBRAIN_PORTFOLIO_ID` environment variable is set to a non-empty value, `False` otherwise.
     """
     debug("Checking for Investbrain accounts...")
     investbrain_vars = []
@@ -109,8 +165,24 @@ def has_investbrain_accounts() -> bool:
 
 def load_accounts() -> list[dict]:
     """
-    Parses .env to find account credential pairs.
-    Expected format: PREFIX_API_KEY, PREFIX_API_SECRET, and either PREFIX_GHOSTFOLIO_ACCOUNT_ID or PREFIX_INVESTBRAIN_PORTFOLIO_ID
+    Discover and return Trading212 accounts configured via environment variables.
+    
+    Scans the process environment for variables matching PREFIX_API_KEY with a companion PREFIX_API_SECRET, and collects accounts that also provide either PREFIX_GHOSTFOLIO_ACCOUNT_ID or PREFIX_INVESTBRAIN_PORTFOLIO_ID.
+    
+    Returns:
+        list[dict]: A list of account dictionaries. Each dictionary contains:
+            - prefix (str): lowercased prefix (e.g., "isa", "cfd").
+            - api_key (str): value of PREFIX_API_KEY.
+            - api_secret (str): value of PREFIX_API_SECRET.
+            - ghostfolio_account_id (str | None): value of PREFIX_GHOSTFOLIO_ACCOUNT_ID if present.
+            - investbrain_portfolio_id (str | None): value of PREFIX_INVESTBRAIN_PORTFOLIO_ID if present.
+    
+    Raises:
+        SystemExit: If any discovered prefix is missing both platform account IDs, or if no valid accounts are found.
+    
+    Notes:
+        - Environment variable names are case-sensitive; duplicate prefixes differing only by case are ignored after the first discovery.
+        - If a PREFIX_API_KEY is found without a matching PREFIX_API_SECRET the prefix is skipped with a warning.
     """
     accounts = []
     seen_prefixes = []  # Guard against duplicate env-var casing (e.g. ISA vs isa)
@@ -181,8 +253,18 @@ def safe_parse_reset(header_value: str | None) -> int | None:
 
 
 def safe_parse_remaining(header_value: str | None, default: int = 1) -> int:
-    """Safely parse x-ratelimit-remaining header to an integer.
-    Returns default on any failure and prints a warning."""
+    """
+    Parse Trading212 "x-ratelimit-remaining" header into an int and return a fallback on failure.
+    
+    Logs a warning when the header is malformed.
+    
+    Parameters:
+        header_value (str | None): Raw `x-ratelimit-remaining` header value from the response; may be None.
+        default (int): Value to return when the header is missing or cannot be parsed as an integer.
+    
+    Returns:
+        int: The parsed remaining request count, or `default` if the header is missing or malformed.
+    """
     if header_value is None:
         return default
     try:
@@ -201,7 +283,15 @@ class RateLimitExceeded(Exception):
 
 
 def check_t212_rate_limit(headers: dict) -> bool:
-    """Check if Trading212 API is currently rate-limited by making a test request."""
+    """
+    Check whether the Trading212 API is currently rate-limited.
+    
+    Parameters:
+        headers (dict): HTTP headers to include with the test request (e.g., authorization).
+    
+    Returns:
+        True if the Trading212 API responds with HTTP 429, False otherwise.
+    """
     try:
         resp = requests.get(f"{BASE_URL}/equity/history/orders?limit=1", headers=headers, timeout=REQUEST_TIMEOUT)
         return resp.status_code == 429
@@ -211,10 +301,14 @@ def check_t212_rate_limit(headers: dict) -> bool:
 
 
 def check_yahoo_rate_limit() -> bool:
-    """Check if Yahoo Finance is currently rate-limited.
-    Uses v8/finance/chart — the endpoint family that yahoo-finance2 and
-    Ghostfolio actually rely on.  The old v7/finance/quote is permanently 429
-    without auth.  A browser-like User-Agent is required to avoid bot blocking.
+    """
+    Detect whether Yahoo Finance is currently rate-limiting requests.
+    
+    Performs an HTTP GET against the Yahoo Finance chart endpoint for the symbol defined by
+    the environment variable `YAHOO_RATE_LIMIT_CHECK_SYMBOL` (defaults to `"AMZN"`).
+    
+    Returns:
+        True if Yahoo appears rate-limited (HTTP 429 or response text indicates rate-limit/unavailable), False otherwise.
     """
     symbol = os.getenv("YAHOO_RATE_LIMIT_CHECK_SYMBOL", "AMZN")
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=1d&interval=1d"
@@ -231,7 +325,20 @@ def check_yahoo_rate_limit() -> bool:
 
 
 def safe_get(url: str, headers: dict, max_retries: int = MAX_429_RETRIES) -> requests.Response:
-    """Wrapper for GET requests that handles 429 Rate Limiting with a retry cap."""
+    """
+    Send an HTTP GET and transparently handle HTTP 429 rate-limit responses by waiting and retrying up to a configurable cap.
+    
+    Parameters:
+        url (str): The request URL.
+        headers (dict): HTTP headers to include with the request.
+        max_retries (int): Maximum number of 429 retries before aborting.
+    
+    Returns:
+        requests.Response: The successful HTTP response (non-429) with status checks applied.
+    
+    Raises:
+        RateLimitExceeded: If more than `max_retries` HTTP 429 responses are received.
+    """
     retries = 0
     while True:
         debug(f"[GET] {url}")
@@ -254,7 +361,26 @@ def safe_get(url: str, headers: dict, max_retries: int = MAX_429_RETRIES) -> req
 
 
 def safe_post(url: str, headers: dict, json_body: dict, max_retries: int = MAX_429_RETRIES) -> requests.Response:
-    """Wrapper for POST requests that handles 429 Rate Limiting with a retry cap."""
+    """
+    Perform an HTTP POST and retry when the server responds with HTTP 429, honoring a maximum retry count.
+    
+    This function issues a POST to `url` with `headers` and `json_body`. On HTTP 429 responses it will:
+    - increment an internal retry counter and, if the counter exceeds `max_retries`, raise `RateLimitExceeded`;
+    - otherwise compute a wait interval using the `x-ratelimit-reset` header (minimum 10s) or a 60s fallback, sleep, and retry the same request.
+    
+    Parameters:
+        url (str): The request URL.
+        headers (dict): HTTP headers to send.
+        json_body (dict): JSON body to include in the POST.
+        max_retries (int): Maximum number of 429 retries before aborting.
+    
+    Returns:
+        requests.Response: The successful HTTP response (status code < 400).
+    
+    Raises:
+        RateLimitExceeded: If HTTP 429 is received more than `max_retries` times.
+        requests.HTTPError: If a non-429 HTTP error status is returned (propagated from `raise_for_status()`).
+    """
     retries = 0
     while True:
         debug(f"[POST] {url}")
@@ -276,7 +402,19 @@ def safe_post(url: str, headers: dict, json_body: dict, max_retries: int = MAX_4
 
 
 def _page_earliest(headers: dict, start_url: str, extract_date) -> datetime | None:
-    """Generic paginator that finds the oldest timestamp across all pages of an endpoint."""
+    """
+    Finds the earliest (oldest) datetime present across all paginated items from a Trading212 endpoint.
+    
+    Iterates through pages starting at `start_url`, extracting timestamps from each item using `extract_date`. The function follows `nextPagePath` links to subsequent pages and may pause between requests or wait for a rate-limit reset when response headers indicate the rate limit is nearly exhausted.
+    
+    Parameters:
+        headers (dict): HTTP headers to include with each request (e.g., authorization).
+        start_url (str): Full URL of the first page to request.
+        extract_date (Callable[[dict], str | None]): Function that returns an ISO-8601 timestamp string (or None) for a given item.
+    
+    Returns:
+        datetime | None: The earliest discovered timezone-aware datetime across all items, or `None` if no timestamps were found.
+    """
     oldest = None
     next_url = start_url
 
@@ -310,7 +448,12 @@ def _page_earliest(headers: dict, start_url: str, extract_date) -> datetime | No
 
 
 def get_earliest_year(headers: dict) -> int:
-    """Scans orders, dividends, and transactions to find the earliest activity date."""
+    """
+    Finds the calendar year of the earliest Trading212 activity by scanning orders, dividends, and transactions.
+    
+    Returns:
+        int: The year of the earliest activity found. If no activity is discovered, returns the current UTC year.
+    """
     info("Detecting earliest activity date...")
 
     sources = [
@@ -340,7 +483,17 @@ def get_earliest_year(headers: dict) -> int:
 
 
 def request_export(headers: dict, time_from: datetime, time_to: datetime) -> int:
-    """Triggers an export request on the Trading212 backend."""
+    """
+    Request a server-side export for a given time range on the Trading212 backend.
+    
+    Parameters:
+        headers (dict): HTTP headers to include with the request (Authorization, etc.).
+        time_from (datetime): Start of the export range; converted to UTC and formatted as "%Y-%m-%dT%H:%M:%SZ".
+        time_to (datetime): End of the export range; converted to UTC and formatted as "%Y-%m-%dT%H:%M:%SZ".
+    
+    Returns:
+        int: The `reportId` assigned by the server for the created export.
+    """
     resp = safe_post(f"{BASE_URL}/equity/history/exports", headers, {
         "dataIncluded": {
             "includeDividends": True,
@@ -357,7 +510,20 @@ def request_export(headers: dict, time_from: datetime, time_to: datetime) -> int
 
 
 def wait_for_export(headers: dict, report_id: int, timeout: int = 600) -> str:
-    """Polls the export status until it is 'Finished' and returns the download link."""
+    """
+    Waits for a server-side export identified by `report_id` to reach status "Finished" and returns its download URL.
+    
+    Parameters:
+        headers (dict): HTTP headers to use for API requests (must include authorization).
+        report_id (int): Identifier of the export report to poll.
+        timeout (int): Maximum number of seconds to wait before giving up.
+    
+    Returns:
+        str: The download link for the finished export.
+    
+    Raises:
+        TimeoutError: If the export is not finished within `timeout` seconds.
+    """
     info(f"Waiting for report {report_id}...")
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -374,7 +540,15 @@ def wait_for_export(headers: dict, report_id: int, timeout: int = 600) -> str:
 
 
 def download_csv(url: str) -> str:
-    """Downloads the CSV file from the provided Temporary URL."""
+    """
+    Download CSV text from the given temporary export URL.
+    
+    Returns:
+        csv_text (str): The CSV content returned by the URL.
+    
+    Raises:
+        requests.HTTPError: If the HTTP response status indicates an error.
+    """
     info("Downloading export file...")
     resp = requests.get(url, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
@@ -409,7 +583,19 @@ def normalize_csv(lines: list[str]) -> list[str]:
 
 
 def load_state(prefix: str) -> dict:
-    """Reads the last sync timestamp from the .state folder."""
+    """
+    Load persisted state for the given prefix from the state directory.
+    
+    Attempts to read and parse <STATE_DIR>/<prefix>.json as JSON and return its contents.
+    If the file does not exist or contains invalid JSON, returns an empty dict. A warning
+    is emitted when the file exists but cannot be decoded.
+    
+    Parameters:
+        prefix (str): Filename prefix identifying the state file (without extension).
+    
+    Returns:
+        dict: Parsed state mapping from the JSON file, or an empty dict if missing or corrupted.
+    """
     path = os.path.join(STATE_DIR, f"{prefix}.json")
     if os.path.exists(path):
         try:
@@ -422,7 +608,17 @@ def load_state(prefix: str) -> dict:
 
 
 def save_state(prefix: str, state: dict):
-    """Saves the current sync timestamp to the .state folder."""
+    """
+    Write `state` as JSON to STATE_DIR/<prefix>.json using an atomic tempfile replace.
+    
+    Parameters:
+    	prefix (str): Filename prefix (the final file will be STATE_DIR/<prefix>.json).
+    	state (dict): JSON-serializable mapping to persist.
+    
+    Notes:
+    	The write is performed atomically by writing to `<prefix>.json.tmp`, flushing and
+    	fsyncing, then replacing the target file.
+    """
     path = os.path.join(STATE_DIR, f"{prefix}.json")
     tmp_path = os.path.join(STATE_DIR, f"{prefix}.json.tmp")
     with open(tmp_path, "w", encoding="utf-8") as f:
@@ -434,9 +630,15 @@ def save_state(prefix: str, state: dict):
 
 
 def fetch_account(account: dict) -> tuple[str | None, datetime]:
-    """Orchestrates the fetch process for a single Trading212 account.
-    Returns (csv_path, cutoff_datetime) where csv_path is None if no new
-    transactions were found (no-op success)."""
+    """
+    Orchestrates fetching transaction history for a single Trading212 account and produces a merged CSV when new data exists.
+    
+    Parameters:
+        account (dict): Account configuration containing at least the keys `'prefix'` (str), `'api_key'` (str), and `'api_secret'` (str).
+    
+    Returns:
+        tuple: (`csv_path`, `cutoff_datetime`) where `csv_path` is the path to the written CSV file or `None` if no new transactions were found, and `cutoff_datetime` is the UTC datetime used as the fetch cutoff for this run.
+    """
     prefix   = account["prefix"]
     headers  = make_headers(account["api_key"], account["api_secret"])
     state    = load_state(prefix)

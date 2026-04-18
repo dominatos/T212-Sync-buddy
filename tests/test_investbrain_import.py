@@ -35,7 +35,20 @@ def _mock_response(status_code: int, data: dict = None) -> MagicMock:
 
 def _page_body(transactions: list, current_page: int = 1, last_page: int = 1,
                has_next: bool = False) -> dict:
-    """Builds a paginated API response body matching Investbrain format."""
+    """
+               Build a paginated API response payload shaped like Investbrain's pagination.
+               
+               Parameters:
+                   transactions (list): List of transaction dicts to include in the `"data"` field.
+                   current_page (int): Current page number to place in the `"meta"` object.
+                   last_page (int): Last page number to place in the `"meta"` object.
+                   has_next (bool): If true, sets `"links"["next"]` to a placeholder URL; otherwise `None`.
+               
+               Returns:
+                   dict: A mapping with keys `"data"` (the transactions list), `"meta"` (with
+                   `current_page` and `last_page`), and `"links"` (with `"next"` either a URL
+                   string or `None`).
+               """
     return {
         "data": transactions,
         "meta": {"current_page": current_page, "last_page": last_page},
@@ -45,7 +58,20 @@ def _page_body(transactions: list, current_page: int = 1, last_page: int = 1,
 
 def _tx(symbol: str, tx_type: str, date: str, quantity: float,
         price: float, currency: str = "USD") -> dict:
-    """Builds a single Investbrain transaction dict."""
+    """
+        Create a transaction dictionary matching the Investbrain API shape.
+        
+        Parameters:
+            symbol (str): Security symbol.
+            tx_type (str): Transaction type; when equal to `"BUY"` the returned dict includes `cost_basis`, otherwise it includes `sale_price`.
+            date (str): Transaction date string as expected by the API.
+            quantity (float): Number of shares or units.
+            price (float): Price per unit; mapped to `cost_basis` for buys or `sale_price` for non-buys.
+            currency (str): Currency code, defaults to `"USD"`.
+        
+        Returns:
+            dict: A mapping containing `symbol`, `transaction_type`, `date`, `quantity`, `currency` and either `cost_basis` (for `"BUY"`) or `sale_price` (for other types).
+        """
     tx = {
         "symbol": symbol,
         "transaction_type": tx_type,
@@ -344,7 +370,12 @@ class TestImportToInvestbrainDedupFailure(unittest.TestCase):
 
 # Helper: creates a minimal CSV temp file with one BUY trade
 def _create_test_csv():
-    """Creates a temp CSV file with a single AAPL BUY for use in POST retry tests."""
+    """
+    Create a temporary CSV file containing one AAPL BUY trade for use in POST-retry tests.
+    
+    Returns:
+        file_path (str): Path to the created temporary CSV file.
+    """
     f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
     f.write("Action,Time,Ticker,No. of shares,Price / share,Currency (Price / share)\n")
     f.write("Market buy,2025-01-15 10:00:00,AAPL,10,150.00,USD\n")
