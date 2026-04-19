@@ -42,50 +42,29 @@ def _log(level: int, tag: str, msg: str):
     if _LOG_LEVEL <= level:
         print(f"[{tag}] {msg}", flush=True)
 
-def trace(msg: str): """
-Log a message at the TRACE level.
+def trace(msg: str) -> None:
+    """Log a message at the TRACE level."""
+    _log(0, "TRACE", msg)
 
-Parameters:
-    msg (str): The message to log.
-"""
-_log(0, "TRACE", msg)
-def debug(msg: str): """
-Log a message at the DEBUG verbosity level.
+def debug(msg: str) -> None:
+    """Log a message at the DEBUG verbosity level."""
+    _log(1, "DEBUG", msg)
 
-Outputs the provided message tagged with "DEBUG" when debug-level logging is enabled.
+def info(msg: str) -> None:
+    """Log a message at the INFO level."""
+    _log(2, "INFO", msg)
 
-Parameters:
-    msg (str): The message to log.
-"""
-_log(1, "DEBUG", msg)
-def info(msg: str):  """
-Log a message at the INFO level.
+def warn(msg: str) -> None:
+    """Log a message with WARN severity."""
+    _log(3, "WARN", msg)
 
-Parameters:
-	msg (str): The message text to emit with INFO severity.
-"""
-_log(2, "INFO", msg)
-def warn(msg: str):  """
-Log a message with WARN severity, honoring the configured log level.
+def error(msg: str) -> None:
+    """Log a message at the ERROR level."""
+    _log(4, "ERROR", msg)
 
-Parameters:
-	msg (str): Text of the warning message to emit.
-"""
-_log(3, "WARN", msg)
-def error(msg: str): """
-Log a message at the ERROR level.
-
-Parameters:
-    msg (str): The message to log.
-"""
-_log(4, "ERROR", msg)
-def fatal(msg: str): """
-Log a message at the fatal level using the "FATAL" tag.
-
-Parameters:
-    msg (str): The message text to log.
-"""
-_log(5, "FATAL", msg)
+def fatal(msg: str) -> None:
+    """Log a message at the fatal level using the "FATAL" tag."""
+    _log(5, "FATAL", msg)
 
 # Countdown sleep function
 def countdown_sleep(seconds):
@@ -140,7 +119,7 @@ def has_investbrain_accounts() -> bool:
     Scans environment variable names for keys ending with `_INVESTBRAIN_PORTFOLIO_ID` and treats any non-empty value as configured.
     
     Returns:
-        bool: `True` if at least one `<PREFIX>_INVESTBRAIN_PORTFOLIO_ID` environment variable is set to a non-empty value, `False` otherwise.
+        bool: `True` if at least one `<PREFIX>_INVESTBRAIN_PORTFOLIO_ID` or `INVESTBRAIN_PORTFOLIO_ID` environment variable is set to a non-empty value, `False` otherwise.
     """
     debug("Checking for Investbrain accounts...")
     investbrain_vars = []
@@ -151,7 +130,7 @@ def has_investbrain_accounts() -> bool:
     trace(f"All INVESTBRAIN-related env vars: {all_ib_vars}")
     
     for key in os.environ:
-        if key.endswith("_INVESTBRAIN_PORTFOLIO_ID"):
+        if key == "INVESTBRAIN_PORTFOLIO_ID" or key.endswith("_INVESTBRAIN_PORTFOLIO_ID"):
             portfolio_id = os.getenv(key)
             investbrain_vars.append(f"{key}=***")
             trace(f"Found Investbrain var: {key} = ***")
@@ -200,8 +179,8 @@ def load_accounts() -> list[dict]:
                 trace(f"Skipping duplicate prefix: {prefix_lower}")
                 continue
             if os.getenv(secret_key):                # only add if both key+secret exist
-                gf_account_id = os.getenv(f"{prefix}_GHOSTFOLIO_ACCOUNT_ID")
-                ib_portfolio_id = os.getenv(f"{prefix}_INVESTBRAIN_PORTFOLIO_ID")
+                gf_account_id = os.getenv(f"{prefix}_GHOSTFOLIO_ACCOUNT_ID") or os.getenv("GHOSTFOLIO_ACCOUNT_ID")
+                ib_portfolio_id = os.getenv(f"{prefix}_INVESTBRAIN_PORTFOLIO_ID") or os.getenv("INVESTBRAIN_PORTFOLIO_ID")
                 debug(f"{prefix}: GF={'***' if gf_account_id else 'None'}, IB={'***' if ib_portfolio_id else 'None'}")
                 
                 # Accept account if it has either Ghostfolio OR Investbrain configuration

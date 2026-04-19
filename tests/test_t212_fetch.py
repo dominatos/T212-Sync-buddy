@@ -1012,15 +1012,7 @@ class TestFetchAccount(unittest.TestCase):
 class TestParseArgs(unittest.TestCase):
     """Tests for parse_args()"""
 
-    def test_no_args_defaults(self):
-        """Default invocation has force_initial_sync=False."""
-        args = t212_fetch.parse_args([])
-        self.assertFalse(args.force_initial_sync)
 
-    def test_force_initial_sync_flag(self):
-        """--force-initial-sync flag sets force_initial_sync=True."""
-        args = t212_fetch.parse_args(["--force-initial-sync"])
-        self.assertTrue(args.force_initial_sync)
 
     def test_unknown_arg_raises(self):
         """Unknown arguments cause SystemExit (argparse error)."""
@@ -1028,47 +1020,7 @@ class TestParseArgs(unittest.TestCase):
             t212_fetch.parse_args(["--unknown-flag"])
 
 
-# =============================================================================
-# 17. force_initial_sync
-# =============================================================================
-class TestForceInitialSync(unittest.TestCase):
-    """Tests for force_initial_sync()"""
 
-    def test_wipes_existing_directories(self):
-        """Deletes out/, input/, .state/, temp/, cache/ when they exist."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            data_dir = Path(tmpdir)
-            # Create all target directories with some content
-            for name in ["out", "input", ".state", "temp", "cache"]:
-                d = data_dir / name
-                d.mkdir()
-                (d / "dummy.txt").write_text("data")
-
-            with patch.object(t212_fetch, "_data_dir", data_dir), \
-                 patch.object(t212_fetch, "STATE_DIR", str(data_dir / ".state")), \
-                 patch.object(t212_fetch, "INPUT_DIR", str(data_dir / "input")):
-                t212_fetch.force_initial_sync()
-
-            # All content should be gone
-            for name in ["out", "temp", "cache"]:
-                self.assertFalse((data_dir / name).exists(), f"{name}/ should be deleted")
-            # .state and input should be re-created (empty)
-            self.assertTrue((data_dir / ".state").exists())
-            self.assertTrue((data_dir / "input").exists())
-            self.assertEqual(list((data_dir / ".state").iterdir()), [])
-            self.assertEqual(list((data_dir / "input").iterdir()), [])
-
-    def test_handles_missing_directories(self):
-        """Does not error when directories don't exist yet (first run)."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            data_dir = Path(tmpdir)
-            with patch.object(t212_fetch, "_data_dir", data_dir), \
-                 patch.object(t212_fetch, "STATE_DIR", str(data_dir / ".state")), \
-                 patch.object(t212_fetch, "INPUT_DIR", str(data_dir / "input")):
-                # Should not raise
-                t212_fetch.force_initial_sync()
-            self.assertTrue((data_dir / ".state").exists())
-            self.assertTrue((data_dir / "input").exists())
 
 
 # =============================================================================
