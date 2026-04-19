@@ -42,59 +42,70 @@ def _log(level: int, tag: str, msg: str):
     if _LOG_LEVEL <= level:
         print(f"[{tag}] {msg}")
 
-def trace(msg: str): """
-Log a message at the TRACE level.
+def trace(msg: str):
+    """
+    Log a message at the TRACE level.
 
-Parameters:
-    msg (str): The message to log.
-"""
-_log(0, "TRACE", msg)
-def debug(msg: str): """
-Log a message at the debug verbosity level.
+    Parameters:
+        msg (str): The message to log.
+    """
+    _log(0, "TRACE", msg)
 
-Parameters:
-    msg (str): Message to log.
-"""
-_log(1, "DEBUG", msg)
-def info(msg: str):  """
-Log an informational message according to the configured log level.
+def debug(msg: str):
+    """
+    Log a message at the debug verbosity level.
 
-Parameters:
-    msg (str): Message text to log.
-"""
-_log(2, "INFO", msg)
-def warn(msg: str):  """
-Log a warning-level message.
+    Parameters:
+        msg (str): Message to log.
+    """
+    _log(1, "DEBUG", msg)
 
-Parameters:
-    msg (str): The text to emit at the warning log level.
-"""
-_log(3, "WARN", msg)
-def error(msg: str): """
-Log a message at ERROR level.
+def info(msg: str):
+    """
+    Log an informational message according to the configured log level.
 
-Parameters:
-    msg (str): The message to log.
-"""
-_log(4, "ERROR", msg)
-def fatal(msg: str): """
-Log a message at fatal severity.
+    Parameters:
+        msg (str): Message text to log.
+    """
+    _log(2, "INFO", msg)
 
-Parameters:
-    msg (str): The message to log.
-"""
-_log(5, "FATAL", msg)
+def warn(msg: str):
+    """
+    Log a warning-level message.
+
+    Parameters:
+        msg (str): The text to emit at the warning log level.
+    """
+    _log(3, "WARN", msg)
+
+def error(msg: str):
+    """
+    Log a message at ERROR level.
+
+    Parameters:
+        msg (str): The message to log.
+    """
+    _log(4, "ERROR", msg)
+
+def fatal(msg: str):
+    """
+    Log a message at fatal severity.
+
+    Parameters:
+        msg (str): The message to log.
+    """
+    _log(5, "FATAL", msg)
 
 debug(f"Loading .env from: {_env_file}")
 trace(f".env exists: {os.path.exists(_env_file)}")
 load_dotenv(dotenv_path=_env_file)
 
-# Debug: Show environment variables (mask secrets)
-for key in os.environ:
-    if 'INVESTBRAIN' in key.upper() or 'T212' in key.upper():
-        is_secret = any(s in key.upper() for s in ['TOKEN', 'SECRET', 'KEY', 'PASSWORD'])
-        value = '***' if is_secret else os.environ[key]
-        trace(f"  {key}={value}")
+# Debug: Show key environment variables explicitly
+trace(f"  T212_ENV_FILE={_env_file}")
+trace(f"  T212_LOG_LEVEL={os.getenv('T212_LOG_LEVEL', 'INFO')}")
+trace(f"  INVESTBRAIN_URL={os.getenv('INVESTBRAIN_URL')}")
+trace(f"  INVESTBRAIN_SAME_DAY_DELAY_SECONDS={os.getenv('INVESTBRAIN_SAME_DAY_DELAY_SECONDS', '2')}")
+trace(f"  INVESTBRAIN_API_TOKEN={'***' if os.getenv('INVESTBRAIN_API_TOKEN') else 'None'}")
 
 REQUEST_TIMEOUT = (30, 200)  # (connect_timeout, read_timeout)
 SAME_DAY_DELAY_SECONDS = float(os.getenv("INVESTBRAIN_SAME_DAY_DELAY_SECONDS", "2"))  # delay between same-symbol same-day transactions
