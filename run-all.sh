@@ -120,6 +120,7 @@ if [[ "$orphan_found" == true ]]; then
 fi
 
 had_failure=0
+investbrain_any_success=0
 YAHOO_RATE_LIMIT_COOLDOWN_SECONDS="${YAHOO_RATE_LIMIT_COOLDOWN_SECONDS:-300}"
 YAHOO_RATE_LIMIT_CHECK_SYMBOL="${YAHOO_RATE_LIMIT_CHECK_SYMBOL:-AMZN}"
 YAHOO_RATE_LIMIT_FILE=".state/yahoo_rate_limit"
@@ -367,6 +368,7 @@ process_account() {
           continue
         }
         log_info "✅ Import successful"
+        investbrain_any_success=1
       fi
 
       # Create a simple success marker for Investbrain (no JSON files)
@@ -512,12 +514,6 @@ process_account() {
   done
 }
 
-# --- GLOBAL INVESTBRAIN REFRESH (Pre-Import) ---
-if [[ ${#investbrain_accounts[@]} -gt 0 && "${INVESTBRAIN_IMPORT:-}" == "true" ]]; then
-    log_info "🔄 Refreshing Investbrain historical currency rates..."
-    docker exec investbrain-app php artisan refresh:currency-data || log_warn "Failed to refresh currency-data"
-fi
-
 # Iterate through discovered accounts/prefixes
 for prefix in "${!ghostfolio_accounts[@]}"; do
   log_debug "Processing Ghostfolio account: $prefix"
@@ -532,11 +528,10 @@ for prefix in "${!ghostfolio_accounts[@]}"; do
   process_account "$prefix" "$account_id" "ghostfolio"
 done
 
-# --- GLOBAL INVESTBRAIN REFRESH (Post-Import) ---
+# --- GLOBAL INVESTBRAIN REFRESH (Pre-Import) ---
 if [[ ${#investbrain_accounts[@]} -gt 0 && "${INVESTBRAIN_IMPORT:-}" == "true" ]]; then
-    log_info "🔄 Refreshing Investbrain market data and dividends..."
-    docker exec investbrain-app php artisan refresh:market-data || log_warn "Failed to refresh market-data"
-    docker exec investbrain-app php artisan refresh:dividend-data || log_warn "Failed to refresh dividend-data"
+    log_info "🔄 Refreshing Investbrain historical currency rates..."
+    docker exec investbrain-app php artisan refresh:currency-data || log_warn "Failed to refresh currency-data"
 fi
 
 for prefix in "${!investbrain_accounts[@]}"; do
@@ -551,6 +546,13 @@ for prefix in "${!investbrain_accounts[@]}"; do
   log_trace "Calling process_account for Investbrain: prefix=$prefix, portfolio_id=***"
   process_account "$prefix" "$portfolio_id" "investbrain"
 done
+
+# --- GLOBAL INVESTBRAIN REFRESH (Post-Import) ---
+if [[ ${#investbrain_accounts[@]} -gt 0 && "${INVESTBRAIN_IMPORT:-}" == "true" && "$investbrain_any_success" -eq 1 ]]; then
+    log_info "🔄 Refreshing Investbrain market data and dividends..."
+    docker exec investbrain-app php artisan refresh:market-data || log_warn "Failed to refresh market-data"
+    docker exec investbrain-app php artisan refresh:dividend-data || log_warn "Failed to refresh dividend-data"
+fi
 
 rmdir temp 2>/dev/null || true
 
