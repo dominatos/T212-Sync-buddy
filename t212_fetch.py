@@ -298,8 +298,8 @@ def check_yahoo_rate_limit() -> bool:
             return True
         if 'too many requests' in resp.text.lower() or 'rate limit' in resp.text.lower() or 'service unavailable' in resp.text.lower():
             return True
-    except Exception:
-        pass
+    except Exception as e:
+        trace(f"Yahoo rate-limit check failed: {e}")
     return False
 
 
