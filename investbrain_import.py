@@ -16,6 +16,7 @@ import argparse
 import requests
 import csv
 import os
+import sys
 import json
 import time
 from pathlib import Path
@@ -640,4 +641,4 @@ def main():
     return 0
 
 if __name__ == "__main__":
-    exit(main())
+    sys.exit(main())
