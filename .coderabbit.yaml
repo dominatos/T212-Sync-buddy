@@ -3,13 +3,15 @@ language: "en-US"
 
 reviews:
   profile: "assertive"
+
   auto_review:
     enabled: true
-  ignore_title_keywords:
-    - "wip"
-    - "draft"
-    - "experimental"
-  
+    auto_incremental_review: true
+    ignore_title_keywords:
+      - "wip"
+      - "draft"
+      - "experimental"
+
   instructions: |
     - You are acting as a Senior Engineer reviewing this repository.
     - All code, comments, logs, documentation, and outputs must be in English.
@@ -17,20 +19,29 @@ reviews:
     - No "smart improvements": Do NOT optimize, refactor, simplify, or redesign unless explicitly requested.
     - Data Security: Ensure no sensitive data (API keys, secrets, tokens, passwords) are committed. Only `.env.sample` is allowed, never `.env`.
     - Ensure documentation updates: Any new/changed config must be reflected in `.env.sample` and `README.md`.
-    - Data integrity & Idempotency: Highlight any code that breaks CSV ↔ JSON cross-verification or idempotency of state persistence runs.
+    - Data integrity & Idempotency: Highlight any code that breaks CSV/JSON cross-verification or idempotency of state persistence runs.
+    - Prefix Naming Contract:
+        - Environment variables use UPPERCASE prefixes: `PREFIX_API_KEY`, `PREFIX_API_SECRET`.
+        - CSV filenames use lowercase prefixes with hyphen separator: `prefix-YYYY-MM-DD.csv`.
+        - Underscore (`_`) is NEVER used as a CSV filename separator.
+    - File Matching Contract: `run-all.sh` matches input files via `input/*-*.csv` (hyphen-only glob).
+    - Dual Destination Support: This repository syncs to both Ghostfolio and Investbrain independently.
 
-file_path_instructions:
-  - path: "**/*.sh"
-    instructions: |
-      - Bash 4.0+ compliant (`set -e -o pipefail`, associative arrays, `mapfile`).
-      - Use explicit paths or environment variables.
-      - Ensure ShellCheck clean where possible.
-      - Ensure tests exist in `tests/test_run_all.bats` for new logic.
-      
-  - path: "**/*.py"
-    instructions: |
-      - Python 3.10+ compatibility is required (use type hints and modern syntax).
-      - Main dependencies are `requests` and `python-dotenv`. Consult the project owner before introducing new external libraries.
-      - Ensure API rate-limiting is handled gracefully with retry caps.
-      - State persistence must strictly be transactional (written only on confirmed success).
-      - Ensure unit tests using `unittest` and `unittest.mock` exist in `tests/test_t212_fetch.py`.
+  path_instructions:
+    - path: "**/*.sh"
+      instructions: |
+        - Bash 4.0+ compliant (`set -e -o pipefail`, associative arrays, `mapfile`).
+        - Use explicit paths or environment variables.
+        - Ensure ShellCheck clean where possible.
+        - Verification Contract: `run-all.sh` must cross-verify Ghostfolio CSV conversions against JSON and trust `investbrain_import.py` for success/failure.
+        - Ensure tests exist in `tests/test_run_all.bats` for new logic.
+
+    - path: "**/*.py"
+      instructions: |
+        - Python 3.10+ compatibility is required (use type hints and modern syntax).
+        - Core components: `t212_fetch.py`, `investbrain_import.py`, `preprocess_isin.py`.
+        - Main dependencies are `requests` and `python-dotenv`. Consult the project owner before introducing new external libraries.
+        - Rate-Limit Contract: `t212_fetch.py` checks Yahoo limits before fetch only when no Investbrain accounts exist.
+        - Ensure API rate-limiting is handled gracefully with retry caps.
+        - State Persistence Contract: State must be transactional (written only on confirmed success).
+        - Ensure unit tests using `unittest`, `unittest.mock`, and `freezegun` exist in `tests/test_t212_fetch.py`.

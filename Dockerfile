@@ -3,11 +3,12 @@ FROM docker:27-cli AS docker-cli
 
 # Stage 2: Build the fetcher image
 FROM python:3.12-slim
+ENV PYTHONUNBUFFERED=1
 
 # Install bash tools needed by run-all.sh
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        bash jq gawk && \
+        bash jq gawk curl && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy Docker CLI from official image (avoids docker.io which only provides the daemon)
@@ -22,6 +23,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy scripts into the image
 COPY t212_fetch.py .
 COPY run-all.sh .
-RUN chmod +x run-all.sh
+COPY investbrain_import.py .
+# Required for Ghostfolio ISIN preprocessing (UK/IE ticker remapping)
+# preprocess_isin.py is called by run-all.sh (line 237) for Ghostfolio runs
+# isin-mapping.json is the ticker-to-ISIN lookup table it reads from /app/isin-mapping.json
+COPY preprocess_isin.py .
+COPY isin-mapping.json .
+RUN chmod +x run-all.sh investbrain_import.py
 
 ENTRYPOINT ["python3", "t212_fetch.py"]
