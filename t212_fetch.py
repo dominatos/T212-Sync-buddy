@@ -30,7 +30,7 @@ from dotenv import load_dotenv
 _LOG_LEVEL_NAMES = {"TRACE": 0, "DEBUG": 1, "INFO": 2, "WARN": 3, "ERROR": 4, "FATAL": 5}
 _LOG_LEVEL = _LOG_LEVEL_NAMES.get(os.getenv("T212_LOG_LEVEL", "INFO").upper(), 2)
 
-def _log(level: int, tag: str, msg: str):
+def _log(level: int, tag: str, msg: str) -> None:
     """
     Log a tagged message to stdout if the current log level permits it.
     
@@ -39,7 +39,7 @@ def _log(level: int, tag: str, msg: str):
         tag (str): Short tag shown in square brackets before the message (e.g., "INFO").
         msg (str): The message text to print.
     """
-    if _LOG_LEVEL <= level:
+    if level >= _LOG_LEVEL:
         print(f"[{tag}] {msg}", flush=True)
 
 def trace(msg: str) -> None:

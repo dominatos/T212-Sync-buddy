@@ -67,8 +67,8 @@ for var in $(compgen -e); do
     fi
 done
 
-log_debug "Ghostfolio accounts found: ${!ghostfolio_accounts[@]}"
-log_debug "Investbrain accounts found: ${!investbrain_accounts[@]}"
+log_debug "Ghostfolio accounts found: ${!ghostfolio_accounts[*]}"
+log_debug "Investbrain accounts found: ${!investbrain_accounts[*]}"
 
 # Fallback: support unprefixed GHOSTFOLIO_ACCOUNT_ID for single-account setups
 if [[ ${#ghostfolio_accounts[@]} -eq 0 && -n "${GHOSTFOLIO_ACCOUNT_ID:-}" ]]; then

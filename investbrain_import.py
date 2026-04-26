@@ -30,7 +30,7 @@ _env_file = os.getenv("T212_ENV_FILE", str(_script_dir / ".env"))
 _LOG_LEVEL_NAMES = {"TRACE": 0, "DEBUG": 1, "INFO": 2, "WARN": 3, "ERROR": 4, "FATAL": 5}
 _LOG_LEVEL = _LOG_LEVEL_NAMES.get(os.getenv("T212_LOG_LEVEL", "INFO").upper(), 2)
 
-def _log(level: int, tag: str, msg: str):
+def _log(level: int, tag: str, msg: str) -> None:
     """
     Log a message to stdout when the configured log level is at or above `level`.
     
@@ -39,10 +39,10 @@ def _log(level: int, tag: str, msg: str):
         tag (str): Short identifier shown in square brackets before the message.
         msg (str): Text of the log message to emit.
     """
-    if _LOG_LEVEL <= level:
+    if level >= _LOG_LEVEL:
         print(f"[{tag}] {msg}")
 
-def trace(msg: str):
+def trace(msg: str) -> None:
     """
     Log a message at the TRACE level.
 
@@ -51,7 +51,7 @@ def trace(msg: str):
     """
     _log(0, "TRACE", msg)
 
-def debug(msg: str):
+def debug(msg: str) -> None:
     """
     Log a message at the debug verbosity level.
 
@@ -60,7 +60,7 @@ def debug(msg: str):
     """
     _log(1, "DEBUG", msg)
 
-def info(msg: str):
+def info(msg: str) -> None:
     """
     Log an informational message according to the configured log level.
 
@@ -69,7 +69,7 @@ def info(msg: str):
     """
     _log(2, "INFO", msg)
 
-def warn(msg: str):
+def warn(msg: str) -> None:
     """
     Log a warning-level message.
 
@@ -78,7 +78,7 @@ def warn(msg: str):
     """
     _log(3, "WARN", msg)
 
-def error(msg: str):
+def error(msg: str) -> None:
     """
     Log a message at ERROR level.
 
@@ -87,7 +87,7 @@ def error(msg: str):
     """
     _log(4, "ERROR", msg)
 
-def fatal(msg: str):
+def fatal(msg: str) -> None:
     """
     Log a message at fatal severity.
 
