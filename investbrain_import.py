@@ -406,9 +406,9 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
             - skipped_count is the number of rows skipped (non-trade, malformed, or deduplicated).
     """
     info(f"Processing CSV: {csv_path}")
-    trace(f"import_to_investbrain called with:")
+    trace("import_to_investbrain called with:")
     trace(f"  csv_path={csv_path}")
-    trace(f"  portfolio_id=***")
+    trace("  portfolio_id=***")
     trace(f"  api_url={api_url}")
     trace(f"  api_token: set (length={len(api_token)})")
     trace(f"  validate_only={validate_only}")
@@ -605,7 +605,7 @@ def main():
     
     trace("main() called with arguments:")
     trace(f"  csv_file={args.csv_file}")
-    trace(f"  portfolio_id=***")
+    trace("  portfolio_id=***")
     trace(f"  validate_only={args.validate_only}")
     trace(f"  api_url={args.api_url}")
     trace(f"  api_token: {'set' if args.api_token else 'None'} (length={len(args.api_token) if args.api_token else 0})")
@@ -622,7 +622,7 @@ def main():
 
     info(f"Investbrain Import {'(VALIDATE ONLY)' if args.validate_only else ''}")
     info(f"  API URL: {args.api_url}")
-    debug(f"  Portfolio ID: ***")
+    debug("  Portfolio ID: ***")
     trace(f"  API Token: set (length={len(args.api_token) if args.api_token else 0})")
 
     success_count, error_count, skipped_count = import_to_investbrain(
