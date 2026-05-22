@@ -1,15 +1,18 @@
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+
 language: "en-US"
 
 reviews:
   profile: "assertive"
+
   auto_review:
     enabled: true
+
   ignore_title_keywords:
     - "wip"
     - "draft"
     - "experimental"
-  
+
   instructions: |
     - You are acting as a Senior Engineer reviewing this repository.
     - All code, comments, logs, documentation, and outputs must be in English.
@@ -19,14 +22,17 @@ reviews:
     - Ensure documentation updates: Any new/changed config must be reflected in `.env.sample` and `README.md`.
     - Data integrity & Idempotency: Highlight any code that breaks CSV ↔ JSON cross-verification or idempotency of state persistence runs.
 
-file_path_instructions:
+chat:
+  auto_reply: true
+
+path_instructions:
   - path: "**/*.sh"
     instructions: |
       - Bash 4.0+ compliant (`set -e -o pipefail`, associative arrays, `mapfile`).
       - Use explicit paths or environment variables.
       - Ensure ShellCheck clean where possible.
       - Ensure tests exist in `tests/test_run_all.bats` for new logic.
-      
+
   - path: "**/*.py"
     instructions: |
       - Python 3.10+ compatibility is required (use type hints and modern syntax).
