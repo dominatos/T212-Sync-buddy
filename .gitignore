@@ -14,13 +14,12 @@ INSTRUCTIONS.md
 logs.txt
 history.txt
 .codex
-testing-command.sh
 issue.md
 testinvestbrain-issue/
 .state/
 input/
 out/
 temp/
-test_dump.py
 dump.json
+helper-temp-scripts/
 review.md
