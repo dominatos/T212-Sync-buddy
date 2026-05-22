@@ -13,6 +13,7 @@ Usage:
 import sys
 import csv
 import json
+import logging
 import urllib.request
 import urllib.error
 import time
@@ -82,8 +83,12 @@ def fetch_yahoo_ticker(isin: str) -> str:
             quotes = data.get("quotes", [])
             if quotes:
                 return quotes[0].get("symbol")
-    except Exception:
-        pass
+    except urllib.error.HTTPError as e:
+        logging.exception(f"HTTPError fetching ISIN {isin} from {url}. Status: {e.code}, Reason: {e.reason}")
+    except json.JSONDecodeError as e:
+        logging.exception(f"JSONDecodeError parsing response for ISIN {isin} from {url}")
+    except Exception as e:
+        logging.exception(f"Unexpected error fetching ISIN {isin} from {url}")
     return None
 
 def process_csv(input_file: str, output_file: str) -> tuple[int, bool]:
