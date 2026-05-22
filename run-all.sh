@@ -284,6 +284,7 @@ process_account() {
       # Use HOST_SCRIPTS_DIR when running inside Docker (container paths ≠ host paths for socket mounts)
       _mount_base="${HOST_SCRIPTS_DIR:-$SCRIPT_DIR}"
 
+      set +e +o pipefail
       docker run --rm \
         --user "$(id -u):$(id -g)" \
         -v "${_mount_base}/temp:/var/tmp/e2g-input" \
@@ -298,7 +299,9 @@ process_account() {
         --env GHOSTFOLIO_SECRET="$GHOSTFOLIO_SECRET" \
         --env NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=4000}" \
         --add-host=host.docker.internal:host-gateway \
-        dickwolff/export-to-ghostfolio 2>&1 | tee .state/docker_output.log || docker_rc=${PIPESTATUS[0]}
+        dickwolff/export-to-ghostfolio 2>&1 | tee .state/docker_output.log
+      docker_rc=${PIPESTATUS[0]}
+      set -e -o pipefail
 
       if grep -qiE 'yahoo.*rate limit|too many requests|429' .state/docker_output.log; then
         log_warn "Detected Yahoo/price lookup rate limit in converter output."
