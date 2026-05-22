@@ -107,7 +107,7 @@ def process_csv(input_file: str, output_file: str) -> int:
             else:
                 # 2. Dynamic Auto-Suffix logic for unmapped stocks
                 suffix = CURRENCY_SUFFIXES.get(currency)
-                if suffix and '.' not in ticker and ticker != 'EUR':
+                if suffix and '.' not in ticker and currency != 'EUR':
                     new_ticker = f"{ticker}{suffix}"
                     row['Ticker'] = new_ticker
                     print(f"  ℹ️  {ticker:15} → {new_ticker:15} (Auto-Suffix {suffix})")
