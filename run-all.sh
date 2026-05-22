@@ -233,6 +233,7 @@ process_account() {
         last=$(cat "$YAHOO_RATE_LIMIT_FILE")
         remaining=$((YAHOO_RATE_LIMIT_COOLDOWN_SECONDS - (now - last)))
         log_warn "Skipping conversion: Yahoo Finance rate limit active for another ${remaining}s."
+        rm -f "temp/$csv_name"
         had_failure=1
         continue
       fi
@@ -258,6 +259,7 @@ process_account() {
       log_info "🔄 Preprocessing CSV (replacing .L, .XC tickers with ISINs)..."
       python3 preprocess_isin.py "temp/$csv_name" "temp/${csv_name}.preprocessed" || {
         log_error "Preprocessing failed for $csv_name"
+        rm -f "temp/$csv_name"
         had_failure=1
         continue
       }
@@ -290,6 +292,7 @@ process_account() {
         log_warn "Detected Yahoo/price lookup rate limit in converter output."
         mark_yahoo_rate_limit
         log_warn "⏳ Skipping further conversions for ${YAHOO_RATE_LIMIT_COOLDOWN_SECONDS}s."
+        rm -f "temp/$csv_name"
         had_failure=1
         continue
       fi
@@ -346,6 +349,7 @@ process_account() {
           mkdir -p "input/quarantine"
           mv "$csv_file" "input/quarantine/"
           log_error "🚫 Quarantined $csv_name → input/quarantine/ (Investbrain validation failed)"
+          rm -f "temp/$csv_name"
           had_failure=1
           continue
         }
@@ -364,6 +368,7 @@ process_account() {
           mkdir -p "input/quarantine"
           mv "$csv_file" "input/quarantine/"
           log_error "🚫 Quarantined $csv_name → input/quarantine/ (Investbrain import failed)"
+          rm -f "temp/$csv_name"
           had_failure=1
           continue
         }
