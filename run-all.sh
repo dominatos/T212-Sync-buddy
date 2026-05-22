@@ -479,9 +479,8 @@ process_account() {
       }' "$csv_file" 2>temp/verify_error.txt | sort -k1,1 > temp/csv_data.txt || {
          cat temp/verify_error.txt
          log_warn "🚫 Verification skipped for this file."
-         mkdir -p "input/unverified"
-         mv "$csv_file" "input/unverified/"
-         log_info "📦 Archived $csv_name → input/unverified/"
+         touch ".state/${csv_name}.unverified"
+         log_info "🚩 Marked $csv_name for input/unverified/"
          rm -f "temp/$csv_name"
          had_failure=1
          continue
@@ -499,9 +498,8 @@ process_account() {
         join -t $'\t' -1 1 -2 1 temp/missing_keys.txt temp/csv_data.txt | cut -f2-
         echo "  -------------------------------------------------------"
         # Quarantine mismatched CSV — do NOT mark as done
-        mkdir -p "input/quarantine"
-        mv "$csv_file" "input/quarantine/"
-        log_error "🚫 Quarantined $csv_name → input/quarantine/ (verification failed)"
+        touch ".state/${csv_name}.quarantine"
+        log_error "🚩 Marked $csv_name for input/quarantine/ (verification failed)"
         rm -f temp/json_keys.txt temp/csv_data.txt temp/csv_keys.txt temp/missing_keys.txt temp/verify_error.txt "temp/$csv_name"
         had_failure=1
         continue
@@ -577,6 +575,24 @@ if [[ ${#investbrain_accounts[@]} -gt 0 && "${INVESTBRAIN_IMPORT:-}" == "true" &
     docker exec "$INVESTBRAIN_CONTAINER" php artisan refresh:market-data || log_warn "Failed to refresh market-data"
     docker exec "$INVESTBRAIN_CONTAINER" php artisan refresh:dividend-data || log_warn "Failed to refresh dividend-data"
 fi
+
+# --- ORCHESTRATION FINAL MOVES ---
+# Move any files flagged for unverified/quarantine during platform passes
+for csv_file in input/*-*.csv; do
+    [[ -f "$csv_file" ]] || continue
+    fname=$(basename "$csv_file")
+    if [[ -f ".state/${fname}.quarantine" ]]; then
+        mkdir -p "input/quarantine"
+        mv "$csv_file" "input/quarantine/"
+        log_info "📦 Moved $fname → input/quarantine/"
+        rm -f ".state/${fname}.quarantine" ".state/${fname}.unverified"
+    elif [[ -f ".state/${fname}.unverified" ]]; then
+        mkdir -p "input/unverified"
+        mv "$csv_file" "input/unverified/"
+        log_info "📦 Moved $fname → input/unverified/"
+        rm -f ".state/${fname}.unverified"
+    fi
+done
 
 rmdir temp 2>/dev/null || true
 
