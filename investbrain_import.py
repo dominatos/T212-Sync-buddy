@@ -185,20 +185,23 @@ def parse_csv_row(row: dict) -> Optional[dict]:
     """
     Convert a Trading212 CSV row into an Investbrain transaction dictionary.
     
-    Parses Action, Time, Ticker/ISIN, quantity, price, and currency; normalizes date to YYYY-MM-DD, adjusts GBX/GBp prices to GBP, and appends exchange suffixes for common markets. Returns None for non-trade actions or when required fields are missing or malformed.
+    Parses Action, Time, Ticker/ISIN, quantity, price, and currency; normalizes date to YYYY-MM-DD, adjusts GBX/GBp prices to GBP, and appends exchange suffixes for common markets. Returns None for non-trade actions (deposits, dividends, etc.). Raises ValueError for trade rows with missing or malformed required fields.
     
     Parameters:
         row (dict): A single CSV row as a mapping of column names to string values.
     
     Returns:
-        dict or None: Investbrain transaction payload with keys `symbol`, `date`, `transaction_type`, `quantity`, `currency`, and either `cost_basis` (for BUY) or `sale_price` (for SELL); `None` if the row should be skipped.
+        dict or None: Investbrain transaction payload with keys `symbol`, `date`, `transaction_type`, `quantity`, `currency`, and either `cost_basis` (for BUY) or `sale_price` (for SELL); `None` if the row is a non-trade action.
+    
+    Raises:
+        ValueError: If a trade row has a missing/unparseable date, symbol, quantity, or price.
     """
     # Map Trading212 columns to Investbrain fields
     action = row.get('Action', '').strip()
     transaction_type = map_transaction_type(action)
 
     if transaction_type is None:
-        return None  # Skip non-trade rows
+        return None  # Non-trade row (deposit, dividend, etc.) — skip silently
 
     # Extract required fields
     time_str = row.get('Time', '').strip()
@@ -220,11 +223,9 @@ def parse_csv_row(row: dict) -> Optional[dict]:
                 except ValueError:
                     continue
             else:
-                warn(f"Could not parse date: {time_str}")
-                return None
+                raise ValueError(f"Could not parse date: {time_str}")
     except ValueError as e:
-        warn(f"Error parsing date '{time_str}': {e}")
-        return None
+        raise ValueError(f"Error parsing date '{time_str}': {e}") from e
 
     date = date_obj.strftime('%Y-%m-%d')
 
@@ -233,24 +234,21 @@ def parse_csv_row(row: dict) -> Optional[dict]:
     if not symbol:
         symbol = row.get('ISIN', '').strip()
     if not symbol:
-        warn(f"No symbol found for row: {row}")
-        return None
+        raise ValueError(f"No symbol found for row: {row}")
 
     # Quantity
     quantity_str = row.get('No. of shares', '').strip()
     try:
         quantity = float(quantity_str)
-    except (ValueError, TypeError):
-        warn(f"Invalid quantity '{quantity_str}' for symbol {symbol}")
-        return None
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"Invalid quantity '{quantity_str}' for symbol {symbol}") from e
 
     # Price per share
     price_str = row.get('Price / share', '').strip()
     try:
         price = float(price_str)
-    except (ValueError, TypeError):
-        warn(f"Invalid price '{price_str}' for symbol {symbol}")
-        return None
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"Invalid price '{price_str}' for symbol {symbol}") from e
 
     # Currency - use the currency from "Currency (Price / share)" or fallback
     currency = row.get('Currency (Price / share)', row.get('Currency', 'USD')).strip()
@@ -453,7 +451,12 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
             # 1. Parse all valid transactions into a list first
             transactions = []
             for row in reader:
-                tx = parse_csv_row(row)
+                try:
+                    tx = parse_csv_row(row)
+                except ValueError as e:
+                    warn(f"Skipping malformed row: {e}")
+                    error_count += 1
+                    continue
                 if tx:
                     tx['portfolio_id'] = portfolio_id
                     transactions.append(tx)
@@ -562,17 +565,38 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                                 if "symbol provided" in response.text:
                                     sym = transaction.get('symbol', '')
                                     curr = transaction.get('currency', '')
-                                    fallback_suffix = CURRENCY_SUFFIXES.get(curr)
                                     
-                                    # If it failed without a suffix, try appending the currency's default suffix
-                                    if fallback_suffix and fallback_suffix not in sym and post_attempt < max_post_retries:
-                                        warn(f"💡 AUTODETECT: Symbol '{sym}' invalid. Automatically retrying with '{sym}{fallback_suffix}' fallback...")
-                                        transaction['symbol'] = f"{sym}{fallback_suffix}"
+                                    # Build list of suffixes to try:
+                                    # 1. Currency-based suffix from config (GBP→.L, etc.)
+                                    # 2. For EUR: try common European exchanges
+                                    suffixes_to_try = []
+                                    fallback_suffix = CURRENCY_SUFFIXES.get(curr)
+                                    if fallback_suffix:
+                                        suffixes_to_try.append(fallback_suffix)
+                                    elif curr == 'EUR':
+                                        # EUR has no single suffix — try major Eurozone exchanges
+                                        suffixes_to_try = ['.DE', '.PA', '.AS', '.MI', '.MC', '.HE']
+                                    
+                                    # Strip any previously-tried suffix to get the base symbol
+                                    base_sym = sym.split('.')[0] if '.' in sym else sym
+                                    
+                                    # Find the next untried suffix
+                                    next_suffix = None
+                                    for s in suffixes_to_try:
+                                        if f"{base_sym}{s}" != sym:  # Skip if we already tried this one
+                                            next_suffix = s
+                                            break
+                                        # Remove tried suffix so we advance to the next
+                                        suffixes_to_try.remove(s)
+                                    
+                                    if next_suffix and post_attempt < max_post_retries:
+                                        warn(f"💡 AUTODETECT: Symbol '{sym}' invalid. Automatically retrying with '{base_sym}{next_suffix}' fallback...")
+                                        transaction['symbol'] = f"{base_sym}{next_suffix}"
                                         continue  # Retry with the modified symbol
                                         
                                     error(f"Failed to import row {row_num}: HTTP {response.status_code} - {response.text}")
-                                    warn(f"💡 ACTION REQUIRED: Symbol '{sym}' is invalid on Yahoo Finance.")
-                                    warn(f"   Please look up its ISIN and add it to 'isin-mapping.json' mapped to its correct suffix (e.g. '{sym}.DE' or '{sym}.L').")
+                                    warn(f"💡 ACTION REQUIRED: Symbol '{base_sym}' is invalid on Yahoo Finance.")
+                                    warn(f"   Please look up its ISIN and add it to 'isin-mapping.json' mapped to its correct suffix (e.g. '{base_sym}.DE' or '{base_sym}.L').")
                                     error_count += 1
                                     post_handled = True
                                     break
