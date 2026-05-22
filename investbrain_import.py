@@ -565,38 +565,17 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                                 if "symbol provided" in response.text:
                                     sym = transaction.get('symbol', '')
                                     curr = transaction.get('currency', '')
-                                    
-                                    # Build list of suffixes to try:
-                                    # 1. Currency-based suffix from config (GBP→.L, etc.)
-                                    # 2. For EUR: try common European exchanges
-                                    suffixes_to_try = []
                                     fallback_suffix = CURRENCY_SUFFIXES.get(curr)
-                                    if fallback_suffix:
-                                        suffixes_to_try.append(fallback_suffix)
-                                    elif curr == 'EUR':
-                                        # EUR has no single suffix — try major Eurozone exchanges
-                                        suffixes_to_try = ['.DE', '.PA', '.AS', '.MI', '.MC', '.HE']
                                     
-                                    # Strip any previously-tried suffix to get the base symbol
-                                    base_sym = sym.split('.')[0] if '.' in sym else sym
-                                    
-                                    # Find the next untried suffix
-                                    next_suffix = None
-                                    for s in suffixes_to_try:
-                                        if f"{base_sym}{s}" != sym:  # Skip if we already tried this one
-                                            next_suffix = s
-                                            break
-                                        # Remove tried suffix so we advance to the next
-                                        suffixes_to_try.remove(s)
-                                    
-                                    if next_suffix and post_attempt < max_post_retries:
-                                        warn(f"💡 AUTODETECT: Symbol '{sym}' invalid. Automatically retrying with '{base_sym}{next_suffix}' fallback...")
-                                        transaction['symbol'] = f"{base_sym}{next_suffix}"
+                                    # If it failed without a suffix, try appending the currency's default suffix
+                                    if fallback_suffix and fallback_suffix not in sym and post_attempt < max_post_retries:
+                                        warn(f"💡 AUTODETECT: Symbol '{sym}' invalid. Automatically retrying with '{sym}{fallback_suffix}' fallback...")
+                                        transaction['symbol'] = f"{sym}{fallback_suffix}"
                                         continue  # Retry with the modified symbol
                                         
                                     error(f"Failed to import row {row_num}: HTTP {response.status_code} - {response.text}")
-                                    warn(f"💡 ACTION REQUIRED: Symbol '{base_sym}' is invalid on Yahoo Finance.")
-                                    warn(f"   Please look up its ISIN and add it to 'isin-mapping.json' mapped to its correct suffix (e.g. '{base_sym}.DE' or '{base_sym}.L').")
+                                    warn(f"💡 ACTION REQUIRED: Symbol '{sym}' is invalid on Yahoo Finance.")
+                                    warn(f"   Please look up its ISIN and add it to 'isin-mapping.json' mapped to its correct suffix (e.g. '{sym}.DE' or '{sym}.L').")
                                     error_count += 1
                                     post_handled = True
                                     break
