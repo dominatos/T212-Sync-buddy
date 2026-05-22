@@ -104,10 +104,12 @@ BASE_URL  = f"{BASE_HOST}/api/v0"
 
 # Ensure required directories exist
 if os.path.exists(STATE_DIR) and not os.path.isdir(STATE_DIR):
+    warn(f"Removing non-directory file blocking STATE_DIR: {STATE_DIR}")
     os.remove(STATE_DIR)
 os.makedirs(STATE_DIR, exist_ok=True)
 
 if os.path.exists(INPUT_DIR) and not os.path.isdir(INPUT_DIR):
+    warn(f"Removing non-directory file blocking INPUT_DIR: {INPUT_DIR}")
     os.remove(INPUT_DIR)
 os.makedirs(INPUT_DIR, exist_ok=True)
 
