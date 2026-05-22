@@ -262,7 +262,7 @@ def parse_csv_row(row: dict) -> dict:
         
     # Apply dynamic auto-suffix logic based on currency
     suffix = CURRENCY_SUFFIXES.get(currency)
-    if suffix and '.' not in symbol and symbol != 'EUR':
+    if suffix and '.' not in symbol and currency != 'EUR':
         symbol = f"{symbol}{suffix}"
 
     # Build transaction data
