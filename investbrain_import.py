@@ -22,7 +22,7 @@ import time
 import traceback
 from typing import Optional
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
 
@@ -209,20 +209,20 @@ def parse_csv_row(row: dict) -> Optional[dict]:
     try:
         # Handle various date formats
         if 'T' in time_str:
-            # ISO format with T
+            # ISO format with T — fromisoformat yields aware datetime when offset is present
             date_obj = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
         else:
-            # Try common formats
+            # Try common formats; attach UTC so the result is timezone-aware
             for fmt in ['%Y-%m-%d %H:%M:%S', '%d/%m/%Y %H:%M:%S', '%m/%d/%Y %H:%M:%S']:
                 try:
-                    date_obj = datetime.strptime(time_str, fmt)
+                    date_obj = datetime.strptime(time_str, fmt).replace(tzinfo=timezone.utc)
                     break
                 except ValueError:
                     continue
             else:
                 warn(f"Could not parse date: {time_str}")
                 return None
-    except Exception as e:
+    except ValueError as e:
         warn(f"Error parsing date '{time_str}': {e}")
         return None
 

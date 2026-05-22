@@ -24,7 +24,7 @@ import investbrain_import
 # =============================================================================
 # Helper: build a mock response for Investbrain transaction API
 # =============================================================================
-def _mock_response(status_code: int, data: dict = None) -> MagicMock:
+def _mock_response(status_code: int, data: dict | None = None) -> MagicMock:
     """Creates a mock requests.Response with the given status code and JSON body."""
     resp = MagicMock()
     resp.status_code = status_code
@@ -216,6 +216,8 @@ class TestFetchExistingFingerprintsRetry(unittest.TestCase):
         Verifies that after max_retries+1 total attempts, the function raises
         RuntimeError instead of returning partial data.
         """
+        # mock_sleep is intentionally unused: it patches time.sleep to prevent
+        # real delays during the fetch_existing_fingerprints retry loop (max_retries=2).
         mock_get.return_value = _mock_response(429)
 
         with self.assertRaises(RuntimeError) as ctx:
