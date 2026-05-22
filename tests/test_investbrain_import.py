@@ -328,13 +328,14 @@ class TestImportToInvestbrainDedupFailure(unittest.TestCase):
             csv_path = f.name
 
         try:
-            success, errors, skipped = investbrain_import.import_to_investbrain(
+            success, errors, non_trade_skipped, dedup_skipped = investbrain_import.import_to_investbrain(
                 csv_path, PORTFOLIO, API_URL, "test-token", validate_only=False
             )
 
             self.assertEqual(success, 0)
             self.assertEqual(errors, 1)
-            self.assertEqual(skipped, 0)
+            self.assertEqual(non_trade_skipped, 0)
+            self.assertEqual(dedup_skipped, 0)
         finally:
             os.unlink(csv_path)
 
@@ -352,7 +353,7 @@ class TestImportToInvestbrainDedupFailure(unittest.TestCase):
             csv_path = f.name
 
         try:
-            success, errors, skipped = investbrain_import.import_to_investbrain(
+            success, errors, non_trade_skipped, dedup_skipped = investbrain_import.import_to_investbrain(
                 csv_path, PORTFOLIO, API_URL, "test-token", validate_only=True
             )
 
@@ -361,6 +362,8 @@ class TestImportToInvestbrainDedupFailure(unittest.TestCase):
             mock_post.assert_not_called()
             self.assertEqual(success, 1)
             self.assertEqual(errors, 0)
+            self.assertEqual(non_trade_skipped, 0)
+            self.assertEqual(dedup_skipped, 0)
         finally:
             os.unlink(csv_path)
 
@@ -401,11 +404,13 @@ class TestTransactionPostRetry(unittest.TestCase):
         ]
         csv_path = _create_test_csv()
         try:
-            success, errors, skipped = investbrain_import.import_to_investbrain(
+            success, errors, non_trade_skipped, dedup_skipped = investbrain_import.import_to_investbrain(
                 csv_path, PORTFOLIO, API_URL, "test-token"
             )
             self.assertEqual(success, 1)
             self.assertEqual(errors, 0)
+            self.assertEqual(non_trade_skipped, 0)
+            self.assertEqual(dedup_skipped, 0)
             self.assertEqual(mock_post.call_count, 2)
             # Backoff: 2.0 * (2^0) = 2.0 seconds
             mock_sleep.assert_called_with(2.0)
@@ -428,11 +433,13 @@ class TestTransactionPostRetry(unittest.TestCase):
         ]
         csv_path = _create_test_csv()
         try:
-            success, errors, skipped = investbrain_import.import_to_investbrain(
+            success, errors, non_trade_skipped, dedup_skipped = investbrain_import.import_to_investbrain(
                 csv_path, PORTFOLIO, API_URL, "test-token"
             )
             self.assertEqual(success, 1)
             self.assertEqual(errors, 0)
+            self.assertEqual(non_trade_skipped, 0)
+            self.assertEqual(dedup_skipped, 0)
             self.assertEqual(mock_post.call_count, 3)
             # Backoff: 2.0*1=2.0s, then 2.0*2=4.0s
             mock_sleep.assert_has_calls([call(2.0), call(4.0)])
@@ -454,11 +461,13 @@ class TestTransactionPostRetry(unittest.TestCase):
         ]
         csv_path = _create_test_csv()
         try:
-            success, errors, skipped = investbrain_import.import_to_investbrain(
+            success, errors, non_trade_skipped, dedup_skipped = investbrain_import.import_to_investbrain(
                 csv_path, PORTFOLIO, API_URL, "test-token"
             )
             self.assertEqual(success, 1)
             self.assertEqual(errors, 0)
+            self.assertEqual(non_trade_skipped, 0)
+            self.assertEqual(dedup_skipped, 0)
             self.assertEqual(mock_post.call_count, 2)
             mock_sleep.assert_called_once_with(2.0)
         finally:
@@ -478,11 +487,13 @@ class TestTransactionPostRetry(unittest.TestCase):
         mock_post.return_value = resp
         csv_path = _create_test_csv()
         try:
-            success, errors, skipped = investbrain_import.import_to_investbrain(
+            success, errors, non_trade_skipped, dedup_skipped = investbrain_import.import_to_investbrain(
                 csv_path, PORTFOLIO, API_URL, "test-token"
             )
             self.assertEqual(success, 0)
             self.assertEqual(errors, 1)
+            self.assertEqual(non_trade_skipped, 0)
+            self.assertEqual(dedup_skipped, 0)
             # Only one attempt — no retries for permanent errors
             self.assertEqual(mock_post.call_count, 1)
             # No backoff sleep should have occurred
@@ -504,11 +515,13 @@ class TestTransactionPostRetry(unittest.TestCase):
         mock_post.return_value = resp
         csv_path = _create_test_csv()
         try:
-            success, errors, skipped = investbrain_import.import_to_investbrain(
+            success, errors, non_trade_skipped, dedup_skipped = investbrain_import.import_to_investbrain(
                 csv_path, PORTFOLIO, API_URL, "test-token"
             )
             self.assertEqual(success, 0)
             self.assertEqual(errors, 1)
+            self.assertEqual(non_trade_skipped, 0)
+            self.assertEqual(dedup_skipped, 0)
             # Initial + 3 retries = 4 total calls
             self.assertEqual(mock_post.call_count, 4)
         finally:

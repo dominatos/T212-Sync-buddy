@@ -20,6 +20,7 @@ import sys
 import json
 import time
 import traceback
+from typing import Optional
 from pathlib import Path
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
@@ -159,7 +160,7 @@ def get_investbrain_headers(api_token: str) -> dict:
     trace(f"Headers created: {list(headers.keys())}")
     return headers
 
-def map_transaction_type(action: str) -> str:
+def map_transaction_type(action: str) -> Optional[str]:
     """
     Map a Trading212 action string to the corresponding Investbrain transaction type.
     
@@ -180,7 +181,7 @@ def map_transaction_type(action: str) -> str:
         # Skip non-trade actions like deposits, withdrawals, dividends, etc.
         return None
 
-def parse_csv_row(row: dict) -> dict:
+def parse_csv_row(row: dict) -> Optional[dict]:
     """
     Convert a Trading212 CSV row into an Investbrain transaction dictionary.
     
@@ -403,10 +404,11 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
         validate_only (bool): If True, do not POST to the API; report which transactions would be imported.
     
     Returns:
-        tuple[int, int, int]: A tuple of (success_count, error_count, skipped_count) where
+        tuple[int, int, int, int]: A tuple of (success_count, error_count, non_trade_skipped_count, dedup_skipped_count) where
             - success_count is the number of transactions successfully imported (or would be imported in validate mode),
             - error_count is the number of transactions that failed to import,
-            - skipped_count is the number of rows skipped (non-trade, malformed, or deduplicated).
+            - non_trade_skipped_count is the number of rows skipped because they were not trades,
+            - dedup_skipped_count is the number of rows skipped because they were already imported.
     """
     info(f"Processing CSV: {csv_path}")
     trace("import_to_investbrain called with:")
@@ -419,7 +421,8 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
     headers = get_investbrain_headers(api_token)
     success_count = 0
     error_count = 0
-    skipped_count = 0
+    non_trade_skipped_count = 0
+    dedup_skipped_count = 0
 
     existing_fingerprints = set()
     if not validate_only:
@@ -429,7 +432,7 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
             # Deduplication must succeed fully or fail deterministically.
             # Proceeding without complete fingerprints risks creating duplicate transactions.
             error(f"Aborting import — deduplication fetch failed: {e}")
-            return 0, 1, 0
+            return 0, 1, 0, 0
 
     try:
         with open(csv_path, 'r', encoding='utf-8') as f:
@@ -455,7 +458,7 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                     tx['portfolio_id'] = portfolio_id
                     transactions.append(tx)
                 else:
-                    skipped_count += 1
+                    non_trade_skipped_count += 1
             
             # 2. Fix intraday conflicts (shift BUYs to D-1 if there's a same-day SELL)
             # This is a workaround for Investbrain's validation logic which ignores same-day buys.
@@ -489,7 +492,7 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                 fingerprint = (symbol, tx_type, date, qty, price)
                 if not validate_only and fingerprint in existing_fingerprints:
                     info(f"⏭️ Skipping duplicate: {symbol} {tx_type} {qty} @ {price} on {date}")
-                    skipped_count += 1
+                    dedup_skipped_count += 1
                     continue
 
                 # 2. Delay for same-symbol same-day transactions to avoid race conditions
@@ -604,15 +607,15 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
 
     except FileNotFoundError:
         error(f"CSV file not found: {csv_path}")
-        if error_count == 0 and success_count == 0 and skipped_count == 0:
+        if error_count == 0 and success_count == 0 and non_trade_skipped_count == 0 and dedup_skipped_count == 0:
             error_count = 1
-        return success_count, error_count, skipped_count
+        return success_count, error_count, non_trade_skipped_count, dedup_skipped_count
     except Exception as e:
         error(f"Error processing CSV {csv_path}: {e}\n{traceback.format_exc()}")
         error_count += 1
-        return success_count, error_count, skipped_count
+        return success_count, error_count, non_trade_skipped_count, dedup_skipped_count
 
-    return success_count, error_count, skipped_count
+    return success_count, error_count, non_trade_skipped_count, dedup_skipped_count
 
 def main():
     """
@@ -658,7 +661,7 @@ def main():
     debug("  Portfolio ID: ***")
     trace(f"  API Token: set (length={len(args.api_token) if args.api_token else 0})")
 
-    success_count, error_count, skipped_count = import_to_investbrain(
+    success_count, error_count, non_trade_skipped_count, dedup_skipped_count = import_to_investbrain(
         args.csv_file,
         args.portfolio_id,
         args.api_url,
@@ -666,7 +669,7 @@ def main():
         args.validate_only
     )
 
-    info(f"Results: {success_count} successful, {skipped_count} skipped (non-trade), {error_count} errors")
+    info(f"Results: {success_count} successful, {non_trade_skipped_count} skipped (non-trade), {dedup_skipped_count} skipped (duplicate), {error_count} errors")
 
     if error_count > 0:
         return 1
