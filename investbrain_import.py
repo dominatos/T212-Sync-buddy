@@ -299,26 +299,27 @@ def parse_csv_row(row: dict) -> Optional[dict]:
 def fetch_existing_fingerprints(portfolio_id: str, api_url: str, headers: dict,
                                   max_retries: int = 3, backoff_base: float = 2.0) -> set:
     """
-                                  Fetch existing Investbrain transactions for a portfolio and return deduplication fingerprints.
-                                  
-                                  Retrieves all pages of transactions from the Investbrain `/api/transaction` endpoint and builds a set of tuples
-                                  (symbol, transaction_type, date (YYYY-MM-DD), rounded_quantity (5 decimals), rounded_price (4 decimals)).
-                                  Retries transient failures (HTTP 429, 5xx, and network errors) up to `max_retries` using exponential backoff
-                                  (backoff_base * 2**attempt). Permanent 4xx (other than 429) errors abort immediately.
-                                  
-                                  Parameters:
-                                      portfolio_id (str): Investbrain portfolio identifier.
-                                      api_url (str): Base Investbrain API URL.
-                                      headers (dict): HTTP headers to include (e.g., authorization).
-                                      max_retries (int): Maximum number of retry attempts for transient failures (default 3).
-                                      backoff_base (float): Base backoff seconds multiplied by 2**attempt for retries (default 2.0).
-                                  
-                                  Returns:
-                                      set: A set of tuples (symbol, transaction_type, date, quantity, price) used for deduplication.
-                                  
-                                  Raises:
-                                      RuntimeError: On permanent client errors or if transient retries are exhausted while fetching pages.
-                                  """
+    Fetch existing Investbrain transactions for a portfolio and return deduplication fingerprints.
+    
+    Retrieves all pages of transactions from the Investbrain `/api/transaction` endpoint and builds a set of tuples
+    (symbol, transaction_type, date (YYYY-MM-DD), rounded_quantity (4 decimals)).
+    Price is excluded from the fingerprint because Investbrain may auto-convert currencies (modifying the stored price).
+    Retries transient failures (HTTP 429, 5xx, and network errors) up to `max_retries` using exponential backoff
+    (backoff_base * 2**attempt). Permanent 4xx (other than 429) errors abort immediately.
+    
+    Parameters:
+        portfolio_id (str): Investbrain portfolio identifier.
+        api_url (str): Base Investbrain API URL.
+        headers (dict): HTTP headers to include (e.g., authorization).
+        max_retries (int): Maximum number of retry attempts for transient failures (default 3).
+        backoff_base (float): Base backoff seconds multiplied by 2**attempt for retries (default 2.0).
+    
+    Returns:
+        set: A set of tuples (symbol, transaction_type, date, quantity) used for deduplication.
+    
+    Raises:
+        RuntimeError: On permanent client errors or if transient retries are exhausted while fetching pages.
+    """
     fingerprints = set()
     page = 1
     info("🔍 Fetching existing Investbrain transactions for deduplication...")
@@ -382,15 +383,11 @@ def fetch_existing_fingerprints(portfolio_id: str, api_url: str, headers: dict,
             tx_type = tx.get('transaction_type')
             # Date comes back as 'YYYY-MM-DD' from API
             date = tx.get('date', '')[:10]
-            qty = round(float(tx.get('quantity') or 0), 5)
-            price_val = tx.get('cost_basis') if tx_type == 'BUY' else tx.get('sale_price')
-            price = round(float(price_val or 0), 4)
+            # Investbrain may auto-convert currencies (modifying the price) and truncate quantities.
+            # To ensure reliable deduplication against CSV data, we exclude price and round qty to 4 decimal places.
+            qty_fingerprint = round(float(tx.get('quantity') or 0), 4)
             
-            # Normalize Investbrain GBX prices to GBP to match our CSV parser
-            if tx.get('currency') == 'GBX':
-                price = round(price / 100.0, 4)
-            
-            fingerprints.add((symbol, tx_type, date, qty, price))
+            fingerprints.add((symbol, tx_type, date, qty_fingerprint))
             
         meta = data.get('meta', {})
         # Stop if we've reached the last page or next link is null
@@ -509,13 +506,14 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                 symbol = transaction.get('symbol')
                 tx_type = transaction.get('transaction_type')
                 date = transaction.get('date', '')[:10]
-                qty = round(float(transaction.get('quantity', 0)), 5)
-                price_val = transaction.get('cost_basis') if tx_type == 'BUY' else transaction.get('sale_price')
-                price = round(float(price_val or 0), 4)
                 
-                fingerprint = (symbol, tx_type, date, qty, price)
+                # Use a robust fingerprint: exclude price (due to Investbrain auto-FX conversion)
+                # and round quantity to 4 decimal places (to handle Investbrain DB truncation differences)
+                qty_fingerprint = round(float(transaction.get('quantity', 0)), 4)
+                fingerprint = (symbol, tx_type, date, qty_fingerprint)
+                
                 if not validate_only and fingerprint in existing_fingerprints:
-                    info(f"⏭️ Skipping duplicate: {symbol} {tx_type} {qty} @ {price} on {date}")
+                    info(f"⏭️ Skipping duplicate: {symbol} {tx_type} {transaction.get('quantity')} on {date}")
                     dedup_skipped_count += 1
                     continue
 
