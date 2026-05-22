@@ -70,7 +70,7 @@ def process_csv(input_file: str, output_file: str) -> int:
     """
     Map tickers in a Trading212 export CSV to Yahoo Finance symbols and write the transformed rows to the specified output CSV.
     
-    Processes each row in input_file: if an ISIN is present and mapped in `ISIN_TO_TICKER`, replaces the `Ticker` with the mapped symbol; otherwise, when the ticker lacks a dot, appends an exchange suffix based on the row currency (e.g., GBP→.L, EUR→.DE, CHF→.SW, CAD→.TO, AUD→.AX, JPY→.T). Rows with an empty `Ticker` are written unchanged.
+    Processes each row in input_file: if an ISIN is present and mapped in `ISIN_TO_TICKER`, replaces the `Ticker` with the mapped symbol; otherwise, when the ticker lacks a dot, appends an exchange suffix based on the row currency (e.g., GBP→.L, CHF→.SW, CAD→.TO, AUD→.AX, JPY→.T). EUR is intentionally left unsuffixed. Rows with an empty `Ticker` are written unchanged.
     
     Parameters:
         input_file (str): Path to the input CSV file to read.
@@ -112,7 +112,7 @@ def process_csv(input_file: str, output_file: str) -> int:
                     row['Ticker'] = new_ticker
                     print(f"  ℹ️  {ticker:15} → {new_ticker:15} (Auto-Suffix {suffix})")
                     replaced_count += 1
-                # If there's a malformed upstream suffix, clean it up (optional, but handled by Ghostfolio mostly)
+
 
             rows_to_write.append(row)
 

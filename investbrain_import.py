@@ -29,6 +29,8 @@ from dotenv import load_dotenv
 _script_dir = Path(__file__).resolve().parent
 _env_file = os.getenv("T212_ENV_FILE", str(_script_dir / ".env"))
 
+load_dotenv(dotenv_path=_env_file)
+
 # --- LOG LEVEL ---
 _LOG_LEVEL_NAMES = {"TRACE": 0, "DEBUG": 1, "INFO": 2, "WARN": 3, "ERROR": 4, "FATAL": 5}
 _LOG_LEVEL = _LOG_LEVEL_NAMES.get(os.getenv("T212_LOG_LEVEL", "INFO").upper(), 2)
@@ -118,7 +120,6 @@ CURRENCY_SUFFIXES = _load_currency_suffixes()
 
 debug(f"Loading .env from: {_env_file}")
 trace(f".env exists: {os.path.exists(_env_file)}")
-load_dotenv(dotenv_path=_env_file)
 
 # Debug: Show key environment variables explicitly
 trace(f"  T212_ENV_FILE={_env_file}")
@@ -217,7 +218,7 @@ def parse_csv_row(row: dict) -> dict:
                 except ValueError:
                     continue
             else:
-                print(f"  ⚠️  Could not parse date: {time_str}")
+                warn(f"Could not parse date: {time_str}")
                 return None
     except Exception as e:
         warn(f"Error parsing date '{time_str}': {e}")
@@ -438,11 +439,9 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
             try:
                 sniffer = csv.Sniffer()
                 dialect = sniffer.sniff(sample)
-                has_header = sniffer.has_header(sample)
             except csv.Error:
-                # Fallback: assume comma-delimited with header
+                # Fallback: assume comma-delimited
                 dialect = 'excel'
-                has_header = True
             
             reader = csv.DictReader(f, dialect=dialect)
             trace("CSV reader created, dialect detected")
@@ -567,15 +566,15 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                                         continue  # Retry with the modified symbol
                                     else:
                                         error(f"Failed to import row {row_num}: HTTP {response.status_code} - {response.text}")
-                                        warn(f"💡 ACTION REQUIRED: Symbol '{item['symbol']}' is invalid on Yahoo Finance.")
-                                        warn(f"   Please look up its ISIN and add it to 'isin-mapping.json' mapped to its correct suffix (e.g. '{item['symbol']}.DE' or '{item['symbol']}.L').")
+                                        warn(f"💡 ACTION REQUIRED: Symbol '{transaction['symbol']}' is invalid on Yahoo Finance.")
+                                        warn(f"   Please look up its ISIN and add it to 'isin-mapping.json' mapped to its correct suffix (e.g. '{transaction['symbol']}.DE' or '{transaction['symbol']}.L').")
                                         error_count += 1
                                         post_handled = True
                                         break
                                 
                                 if "quantity must not be greater" in response.text:
                                     error(f"Failed to import row {row_num}: HTTP {response.status_code} - {response.text}")
-                                    warn(f"💡 NOTE: This quantity error is likely a cascading failure because an earlier BUY order for '{item['symbol']}' failed.")
+                                    warn(f"💡 NOTE: This quantity error is likely a cascading failure because an earlier BUY order for '{transaction['symbol']}' failed.")
                                     error_count += 1
                                     post_handled = True
                                     break

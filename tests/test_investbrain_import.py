@@ -376,11 +376,10 @@ def _create_test_csv():
     Returns:
         file_path (str): Path to the created temporary CSV file.
     """
-    f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
-    f.write("Action,Time,Ticker,No. of shares,Price / share,Currency (Price / share)\n")
-    f.write("Market buy,2025-01-15 10:00:00,AAPL,10,150.00,USD\n")
-    f.close()
-    return f.name
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+        f.write("Action,Time,Ticker,No. of shares,Price / share,Currency (Price / share)\n")
+        f.write("Market buy,2025-01-15 10:00:00,AAPL,10,150.00,USD\n")
+        return f.name
 
 
 class TestTransactionPostRetry(unittest.TestCase):

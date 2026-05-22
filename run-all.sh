@@ -128,6 +128,7 @@ investbrain_any_success=0
 YAHOO_RATE_LIMIT_COOLDOWN_SECONDS="${YAHOO_RATE_LIMIT_COOLDOWN_SECONDS:-300}"
 YAHOO_RATE_LIMIT_CHECK_SYMBOL="${YAHOO_RATE_LIMIT_CHECK_SYMBOL:-AMZN}"
 YAHOO_RATE_LIMIT_FILE=".state/yahoo_rate_limit"
+INVESTBRAIN_CONTAINER="${INVESTBRAIN_CONTAINER:-investbrain-app}"
 
 # yahoo_rate_limit_active checks whether a Yahoo rate-limit marker file exists and its timestamp is still within the configured cooldown; returns 0 when active, 1 otherwise.
 yahoo_rate_limit_active() {
@@ -297,7 +298,7 @@ process_account() {
         --env GHOSTFOLIO_SECRET="$GHOSTFOLIO_SECRET" \
         --env NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=4000}" \
         --add-host=host.docker.internal:host-gateway \
-        dickwolff/export-to-ghostfolio 2>&1 | tee .state/docker_output.log
+        dickwolff/export-to-ghostfolio 2>&1 | tee .state/docker_output.log || docker_rc=${PIPESTATUS[0]}
 
       if grep -qiE 'yahoo.*rate limit|too many requests|429' .state/docker_output.log; then
         log_warn "Detected Yahoo/price lookup rate limit in converter output."
@@ -305,6 +306,13 @@ process_account() {
         log_warn "⏳ Skipping further conversions for ${YAHOO_RATE_LIMIT_COOLDOWN_SECONDS}s."
         rm -f "temp/$csv_name"
         had_failure=1
+        continue
+      fi
+
+      if [[ "${docker_rc:-0}" -ne 0 ]]; then
+        log_error "Docker converter failed with exit code $docker_rc"
+        had_failure=1
+        rm -f "temp/$csv_name"
         continue
       fi
 
@@ -547,7 +555,7 @@ done
 # --- GLOBAL INVESTBRAIN REFRESH (Pre-Import) ---
 if [[ ${#investbrain_accounts[@]} -gt 0 && "${INVESTBRAIN_IMPORT:-}" == "true" ]]; then
     log_info "🔄 Refreshing Investbrain historical currency rates..."
-    docker exec investbrain-app php artisan refresh:currency-data || log_warn "Failed to refresh currency-data"
+    docker exec "$INVESTBRAIN_CONTAINER" php artisan refresh:currency-data || log_warn "Failed to refresh currency-data"
 fi
 
 for prefix in "${!investbrain_accounts[@]}"; do
@@ -566,8 +574,8 @@ done
 # --- GLOBAL INVESTBRAIN REFRESH (Post-Import) ---
 if [[ ${#investbrain_accounts[@]} -gt 0 && "${INVESTBRAIN_IMPORT:-}" == "true" && "$investbrain_any_success" -eq 1 ]]; then
     log_info "🔄 Refreshing Investbrain market data and dividends..."
-    docker exec investbrain-app php artisan refresh:market-data || log_warn "Failed to refresh market-data"
-    docker exec investbrain-app php artisan refresh:dividend-data || log_warn "Failed to refresh dividend-data"
+    docker exec "$INVESTBRAIN_CONTAINER" php artisan refresh:market-data || log_warn "Failed to refresh market-data"
+    docker exec "$INVESTBRAIN_CONTAINER" php artisan refresh:dividend-data || log_warn "Failed to refresh dividend-data"
 fi
 
 rmdir temp 2>/dev/null || true

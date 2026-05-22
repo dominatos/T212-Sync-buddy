@@ -776,14 +776,19 @@ def main():
     trace("Yahoo rate limit check passed or skipped")
 
     # Check if Trading212 API is rate-limited before proceeding
-    rate_limited_accounts = []
+    active_accounts = []
     for account in accounts:
         headers = make_headers(account["api_key"], account["api_secret"])
         if check_t212_rate_limit(headers):
-            rate_limited_accounts.append(account["prefix"].upper())
-    if rate_limited_accounts:
-        warn(f"Trading212 API is rate-limited for accounts: {rate_limited_accounts}. Skipping fetch.")
-        raise SystemExit(1)
+            warn(f"Trading212 API is rate-limited for account: {account['prefix'].upper()}. Skipping fetch for this account.")
+        else:
+            active_accounts.append(account)
+            
+    if not active_accounts:
+        info("All accounts are rate-limited or no active accounts remain. Exiting gracefully.")
+        raise SystemExit(0)
+        
+    accounts = active_accounts
 
     # Track which accounts produced CSVs for downstream per-account success checks
     accounts_with_csvs = []  # list of (account, csv_path, cutoff) tuples
