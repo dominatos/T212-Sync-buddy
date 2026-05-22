@@ -23,22 +23,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
-def _load_currency_suffixes() -> dict:
-    paths = [
-        Path("/app/currency-suffixes.json"),
-        Path(__file__).resolve().parent / "currency-suffixes.json",
-        Path("currency-suffixes.json"),
-    ]
-    for p in paths:
-        if p.exists():
-            try:
-                with open(p, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                pass
-    return {}
 
-CURRENCY_SUFFIXES = _load_currency_suffixes()
 
 # Load environment variables
 _script_dir = Path(__file__).resolve().parent
@@ -113,6 +98,23 @@ def fatal(msg: str) -> None:
         msg (str): The message to log.
     """
     _log(5, "FATAL", msg)
+
+def _load_currency_suffixes() -> dict:
+    paths = [
+        Path("/app/currency-suffixes.json"),
+        Path(__file__).resolve().parent / "currency-suffixes.json",
+        Path("currency-suffixes.json"),
+    ]
+    for p in paths:
+        if p.exists():
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                warn(f"Failed to load {p}: {e}")
+    return {}
+
+CURRENCY_SUFFIXES = _load_currency_suffixes()
 
 debug(f"Loading .env from: {_env_file}")
 trace(f".env exists: {os.path.exists(_env_file)}")
