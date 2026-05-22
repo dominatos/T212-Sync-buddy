@@ -368,6 +368,75 @@ class TestImportToInvestbrainDedupFailure(unittest.TestCase):
             os.unlink(csv_path)
 
 
+    @patch("investbrain_import.fetch_existing_fingerprints")
+    @patch("investbrain_import.requests.post")
+    def test_intra_csv_duplicate_skipped(self, mock_post, mock_fetch):
+        """Verifies that identical transactions within the same CSV are deduplicated.
+
+        Creates a CSV with two identical BUYs. The first should be POSTed (and added
+        to the fingerprints set), and the second should be skipped without POSTing.
+        """
+        mock_fetch.return_value = set()
+        mock_post.return_value = _mock_response(201)
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("Action,Time,Ticker,No. of shares,Price / share,Currency (Price / share)\n")
+            f.write("Market buy,2025-01-15 10:00:00,AAPL,10,150.00,USD\n")
+            f.write("Market buy,2025-01-15 10:00:00,AAPL,10,150.00,USD\n")
+            csv_path = f.name
+
+        try:
+            success, errors, non_trade_skipped, dedup_skipped = investbrain_import.import_to_investbrain(
+                csv_path, PORTFOLIO, API_URL, "test-token", validate_only=False
+            )
+
+            # 1 success (first row), 1 dedup skipped (second row)
+            self.assertEqual(success, 1)
+            self.assertEqual(errors, 0)
+            self.assertEqual(non_trade_skipped, 0)
+            self.assertEqual(dedup_skipped, 1)
+
+            # fetch should be called once, POST should be called only ONCE
+            self.assertEqual(mock_fetch.call_count, 1)
+            self.assertEqual(mock_post.call_count, 1)
+        finally:
+            os.unlink(csv_path)
+
+    @patch("investbrain_import.fetch_existing_fingerprints")
+    @patch("investbrain_import.requests.post")
+    def test_shifted_buy_duplicate_skipped(self, mock_post, mock_fetch):
+        """Verifies that a BUY shifted to D-1 is skipped if it hits an existing fingerprint."""
+        # Pre-seed a fingerprint for AAPL BUY on 2025-01-14
+        mock_fetch.return_value = {("AAPL", "BUY", "2025-01-14", 10.0, 150.0)}
+        mock_post.return_value = _mock_response(201)
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("Action,Time,Ticker,No. of shares,Price / share,Currency (Price / share)\n")
+            # A BUY on 2025-01-15, which will be shifted to 2025-01-14 because of the SELL
+            f.write("Market buy,2025-01-15 10:00:00,AAPL,10,150.00,USD\n")
+            # A SELL on 2025-01-15 to trigger the intraday shift
+            f.write("Market sell,2025-01-15 11:00:00,AAPL,10,155.00,USD\n")
+            csv_path = f.name
+
+        try:
+            success, errors, non_trade_skipped, dedup_skipped = investbrain_import.import_to_investbrain(
+                csv_path, PORTFOLIO, API_URL, "test-token", validate_only=False
+            )
+
+            # The BUY should be shifted to 2025-01-14, matching the pre-existing fingerprint, so it's skipped.
+            # The SELL should be imported successfully.
+            self.assertEqual(success, 1)  # The SELL
+            self.assertEqual(errors, 0)
+            self.assertEqual(non_trade_skipped, 0)
+            self.assertEqual(dedup_skipped, 1)  # The shifted BUY
+
+            self.assertEqual(mock_fetch.call_count, 1)
+            # Only the SELL is POSTed
+            self.assertEqual(mock_post.call_count, 1)
+        finally:
+            os.unlink(csv_path)
+
+
 # =============================================================================
 # 3. import_to_investbrain — transaction POST retry logic
 # =============================================================================

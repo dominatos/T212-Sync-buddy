@@ -541,6 +541,7 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                                  f"{transaction.get('cost_basis', transaction.get('sale_price'))} "
                                  f"{transaction['currency']}")
                             success_count += 1
+                            existing_fingerprints.add(fingerprint)
                             post_handled = True
                             break
                         elif response.status_code == 429 or response.status_code >= 500:
