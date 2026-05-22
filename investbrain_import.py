@@ -520,7 +520,7 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                 post_backoff_base = 2.0
                 url = f"{api_url.rstrip('/')}/api/transaction"
                 post_last_error = None
-                post_succeeded = False
+                post_handled = False
 
                 for post_attempt in range(max_post_retries + 1):
                     try:
@@ -538,7 +538,7 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                                  f"{transaction.get('cost_basis', transaction.get('sale_price'))} "
                                  f"{transaction['currency']}")
                             success_count += 1
-                            post_succeeded = True
+                            post_handled = True
                             break
                         elif response.status_code == 429 or response.status_code >= 500:
                             # Transient server / rate-limit error — retry with backoff
@@ -554,7 +554,7 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                             # Permanent client error (4xx other than 429) — no retry
                             error(f"Failed to import row {row_num}: HTTP {response.status_code} - {response.text}")
                             error_count += 1
-                            post_succeeded = True  # Flag to skip exhaustion block below
+                            post_handled = True  # Flag to skip exhaustion block below
                             break
 
                     except requests.RequestException as e:
@@ -569,7 +569,7 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                         # Retries exhausted — fall through
 
                 # If all retries were exhausted without success or permanent error
-                if not post_succeeded and post_last_error is not None:
+                if not post_handled and post_last_error is not None:
                     error(f"Failed to import row {row_num} after {max_post_retries} retries: {post_last_error}")
                     error_count += 1
 
