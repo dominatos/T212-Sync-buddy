@@ -93,19 +93,22 @@ def process_csv(input_file: str, output_file: str) -> int:
             isin = row.get('ISIN', '').strip()
             currency = row.get('Currency (Price / share)', row.get('Currency', '')).strip()
 
-            if not ticker:
-                rows_to_write.append(row)
-                continue
-
             # 1. Explicit Mapping Override
             if isin and isin in ISIN_TO_TICKER:
                 new_ticker = ISIN_TO_TICKER[isin]
                 if ticker != new_ticker:
                     row['Ticker'] = new_ticker
-                    print(f"  ℹ️  {ticker:15} → {new_ticker:15} (Explicit Map)")
+                    old_display = ticker if ticker else "<BLANK>"
+                    print(f"  ℹ️  {old_display:15} → {new_ticker:15} (Explicit Map)")
                     replaced_count += 1
-            else:
-                # 2. Dynamic Auto-Suffix logic for unmapped stocks
+                    ticker = new_ticker
+
+            if not ticker:
+                rows_to_write.append(row)
+                continue
+
+            # 2. Dynamic Auto-Suffix logic for unmapped stocks
+            if not (isin and isin in ISIN_TO_TICKER):
                 suffix = CURRENCY_SUFFIXES.get(currency)
                 if suffix and '.' not in ticker and currency != 'EUR':
                     new_ticker = f"{ticker}{suffix}"
