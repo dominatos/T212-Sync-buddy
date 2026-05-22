@@ -390,7 +390,7 @@ def fetch_existing_fingerprints(portfolio_id: str, api_url: str, headers: dict,
     debug(f"Found {len(fingerprints)} existing transactions for deduplication.")
     return fingerprints
 
-def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_token: str, validate_only: bool = False) -> tuple[int, int, int]:
+def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_token: str, validate_only: bool = False) -> tuple[int, int, int, int]:
     """
     Import Trading212 transactions from a CSV file into the Investbrain portfolio.
     
