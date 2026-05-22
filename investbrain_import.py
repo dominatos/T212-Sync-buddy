@@ -23,6 +23,23 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
+def _load_currency_suffixes() -> dict:
+    paths = [
+        Path("/app/currency-suffixes.json"),
+        Path(__file__).resolve().parent / "currency-suffixes.json",
+        Path("currency-suffixes.json"),
+    ]
+    for p in paths:
+        if p.exists():
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+    return {}
+
+CURRENCY_SUFFIXES = _load_currency_suffixes()
+
 # Load environment variables
 _script_dir = Path(__file__).resolve().parent
 _env_file = os.getenv("T212_ENV_FILE", str(_script_dir / ".env"))
@@ -241,29 +258,10 @@ def parse_csv_row(row: dict) -> dict:
         currency = 'GBP'
         price = price / 100.0
         
-    # LSE stocks in Yahoo Finance require a .L suffix.
-    if currency == 'GBP' and '.' not in symbol:
-        symbol = f"{symbol}.L"
-
-    # XETRA stocks in Yahoo Finance often require a .DE suffix.
-    if currency == 'EUR' and '.' not in symbol and symbol != 'EUR':
-        symbol = f"{symbol}.DE"
-
-    # Swiss stocks in Yahoo Finance require a .SW suffix.
-    if currency == 'CHF' and '.' not in symbol:
-        symbol = f"{symbol}.SW"
-
-    # Canadian stocks in Yahoo Finance require a .TO suffix.
-    if currency == 'CAD' and '.' not in symbol:
-        symbol = f"{symbol}.TO"
-
-    # Australian stocks in Yahoo Finance require an .AX suffix.
-    if currency == 'AUD' and '.' not in symbol:
-        symbol = f"{symbol}.AX"
-
-    # Japanese stocks in Yahoo Finance require a .T suffix.
-    if currency == 'JPY' and '.' not in symbol:
-        symbol = f"{symbol}.T"
+    # Apply dynamic auto-suffix logic based on currency
+    suffix = CURRENCY_SUFFIXES.get(currency)
+    if suffix and '.' not in symbol and symbol != 'EUR':
+        symbol = f"{symbol}{suffix}"
 
     # Build transaction data
     transaction = {

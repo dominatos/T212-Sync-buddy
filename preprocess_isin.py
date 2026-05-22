@@ -38,6 +38,20 @@ if not MAPPING_FILE:
 with open(MAPPING_FILE) as f:
     ISIN_TO_TICKER = json.load(f)
 
+# Load Currency Suffixes
+SUFFIX_FILE = None
+for p in [Path("/app/currency-suffixes.json"), Path(__file__).parent / "currency-suffixes.json", Path("currency-suffixes.json")]:
+    if p.exists():
+        SUFFIX_FILE = p
+        break
+
+if not SUFFIX_FILE:
+    print(f"❌ currency-suffixes.json not found in any expected location")
+    sys.exit(1)
+
+with open(SUFFIX_FILE) as f:
+    CURRENCY_SUFFIXES = json.load(f)
+
 # Reverse mapping: ticker -> ISIN
 TICKER_TO_ISIN = {v: k for k, v in ISIN_TO_TICKER.items()}
 
@@ -85,35 +99,11 @@ def process_csv(input_file: str, output_file: str):
                     replaced_count += 1
             else:
                 # 2. Dynamic Auto-Suffix logic for unmapped stocks
-                if currency in ['GBP', 'GBX', 'GBp'] and '.' not in ticker:
-                    new_ticker = f"{ticker}.L"
+                suffix = CURRENCY_SUFFIXES.get(currency)
+                if suffix and '.' not in ticker and ticker != 'EUR':
+                    new_ticker = f"{ticker}{suffix}"
                     row['Ticker'] = new_ticker
-                    print(f"  ℹ️  {ticker:15} → {new_ticker:15} (Auto-Suffix .L)")
-                    replaced_count += 1
-                elif currency == 'EUR' and '.' not in ticker and ticker != 'EUR':
-                    new_ticker = f"{ticker}.DE"
-                    row['Ticker'] = new_ticker
-                    print(f"  ℹ️  {ticker:15} → {new_ticker:15} (Auto-Suffix .DE)")
-                    replaced_count += 1
-                elif currency == 'CHF' and '.' not in ticker:
-                    new_ticker = f"{ticker}.SW"
-                    row['Ticker'] = new_ticker
-                    print(f"  ℹ️  {ticker:15} → {new_ticker:15} (Auto-Suffix .SW)")
-                    replaced_count += 1
-                elif currency == 'CAD' and '.' not in ticker:
-                    new_ticker = f"{ticker}.TO"
-                    row['Ticker'] = new_ticker
-                    print(f"  ℹ️  {ticker:15} → {new_ticker:15} (Auto-Suffix .TO)")
-                    replaced_count += 1
-                elif currency == 'AUD' and '.' not in ticker:
-                    new_ticker = f"{ticker}.AX"
-                    row['Ticker'] = new_ticker
-                    print(f"  ℹ️  {ticker:15} → {new_ticker:15} (Auto-Suffix .AX)")
-                    replaced_count += 1
-                elif currency == 'JPY' and '.' not in ticker:
-                    new_ticker = f"{ticker}.T"
-                    row['Ticker'] = new_ticker
-                    print(f"  ℹ️  {ticker:15} → {new_ticker:15} (Auto-Suffix .T)")
+                    print(f"  ℹ️  {ticker:15} → {new_ticker:15} (Auto-Suffix {suffix})")
                     replaced_count += 1
                 # If there's a malformed upstream suffix, clean it up (optional, but handled by Ghostfolio mostly)
 

@@ -29,6 +29,7 @@ COPY investbrain_import.py .
 # isin-mapping.json is the ticker-to-ISIN lookup table it reads from /app/isin-mapping.json
 COPY preprocess_isin.py .
 COPY isin-mapping.json .
+COPY currency-suffixes.json .
 RUN chmod +x run-all.sh investbrain_import.py
 
 ENTRYPOINT ["python3", "t212_fetch.py"]
