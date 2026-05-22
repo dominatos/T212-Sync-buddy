@@ -58,6 +58,7 @@ Your final directory structure should look like this:
 <summary><h2>2. Script Explanations</h2></summary>
 
 ### t212_fetch.py
+
 The core Python script for automated transaction retrieval from Trading 212 via API.
 - **Bootstrapping**: On the first run, it detects your earliest transaction date and performs a full history fetch.
 - **Incremental Updates**: Subsequent runs only fetch activity from the last 7 days.
@@ -66,6 +67,7 @@ The core Python script for automated transaction retrieval from Trading 212 via 
 - **Flow**: After fetching, it automatically triggers `run-all.sh`.
 
 ### run-all.sh
+
 The universal orchestrator for processing CSV exports.
 - **Account Discovery**: Automatically finds all `PREFIX_*` accounts in `.env`.
 - **Platform Handoff**: 
@@ -78,15 +80,18 @@ The universal orchestrator for processing CSV exports.
 - **Organization**: Archives successful files to `input/done/` and quarantines failures.
 
 ### investbrain_import.py
+
 A sophisticated importer designed to handle Investbrain-specific edge cases:
 - **Intraday Workaround**: Automatically detects same-day trade conflicts and implements a sequential delay/shifting logic to bypass Investbrain validation bugs ([#195](https://github.com/investbrainapp/investbrain/issues/195)).
 - **Symbol Mapping**: Auto-appends exchange suffixes (`.DE`, `.L`) to ensure compatibility with Yahoo Finance.
 - **Error Handling**: Detailed reporting of HTTP 422 validation errors.
 
 ### systemdunits/t212-sync-buddy.service
+
 A Linux systemd service unit that defines *how* to run the synchronization. It calls `t212_fetch.py` using the dedicated Python virtual environment.
 
 ### systemdunits/t212-sync-buddy.timer
+
 A systemd timer that controls *when* the sync runs. In the current repository, it is configured to trigger the synchronization daily at **04:00 AM**.
 
 </details>

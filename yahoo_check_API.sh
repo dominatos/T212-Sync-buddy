@@ -171,11 +171,16 @@ while true; do
 
     HTTP_CODE=$(fetch_quotes "$URL" "$FILE")
 
-    if ! validate_response "$FILE" "$HTTP_CODE"; then
-        case $? in
-            1) 
+    # Capture the actual exit code from validate_response before any negation
+    # can overwrite $?. Using `&& rc=0 || rc=$?` preserves the function's
+    # real return value (1=rate-limit, 2=unauthorized, 3=network, 4=other)
+    # even though set -e is active — the || prevents set -e from firing.
+    validate_response "$FILE" "$HTTP_CODE" && rc=0 || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        case $rc in
+            1)
                 WAS_LIMITED=true
-                handle_backoff "rate limit" "$BACKOFF_RATE_LIMIT" 
+                handle_backoff "rate limit" "$BACKOFF_RATE_LIMIT"
                 ;;
             2) handle_backoff "unauthorized" "$BACKOFF_UNAUTHORIZED" ;;
             3) handle_backoff "network failure" "$BACKOFF_NETWORK" ;;
