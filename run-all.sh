@@ -184,6 +184,13 @@ process_account() {
   local prefix="$1"
   local account_id="$2"
   local platform="$3"
+  local csv_files=()
+  local csv_name=""
+  local csv_base=""
+  local produced_json=()
+  local json_files=()
+  local idx=0
+  local total_count=0
 
   log_trace "process_account called: prefix=$prefix, account_id=***, platform=$platform"
   mkdir -p "out/${prefix}"
