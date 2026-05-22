@@ -19,6 +19,7 @@ import os
 import sys
 import json
 import time
+import traceback
 from pathlib import Path
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
@@ -603,10 +604,13 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
 
     except FileNotFoundError:
         error(f"CSV file not found: {csv_path}")
-        return 0, 1, 0
+        if error_count == 0 and success_count == 0 and skipped_count == 0:
+            error_count = 1
+        return success_count, error_count, skipped_count
     except Exception as e:
-        error(f"Error processing CSV: {e}")
-        return 0, 1, 0
+        error(f"Error processing CSV {csv_path}: {e}\n{traceback.format_exc()}")
+        error_count += 1
+        return success_count, error_count, skipped_count
 
     return success_count, error_count, skipped_count
 
