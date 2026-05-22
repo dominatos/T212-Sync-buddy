@@ -49,8 +49,15 @@ if not SUFFIX_FILE:
     print(f"❌ currency-suffixes.json not found in any expected location")
     sys.exit(1)
 
-with open(SUFFIX_FILE) as f:
-    CURRENCY_SUFFIXES = json.load(f)
+try:
+    with open(SUFFIX_FILE) as f:
+        CURRENCY_SUFFIXES = json.load(f)
+except json.JSONDecodeError as e:
+    print(f"❌ Error parsing {SUFFIX_FILE}: Malformed JSON - {e}")
+    sys.exit(1)
+except Exception as e:
+    print(f"❌ Failed to load {SUFFIX_FILE}: {e}")
+    sys.exit(1)
 
 # Reverse mapping: ticker -> ISIN
 TICKER_TO_ISIN = {v: k for k, v in ISIN_TO_TICKER.items()}
