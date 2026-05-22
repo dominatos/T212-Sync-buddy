@@ -3,8 +3,8 @@
 CSV Ticker Mapper for Trading212 Exports
 
 Replaces problematic ticker symbols with their direct Yahoo Finance equivalents 
-(e.g. appending .L for LSE stocks) before passing them to the Ghostfolio converter.
-This ensures they resolve correctly, bypassing Ghostfolio's unreliable ISIN lookup.
+(e.g. appending .L for LSE stocks) prior to conversion for both Ghostfolio and Investbrain.
+This ensures they resolve correctly, bypassing unreliable ISIN lookups.
 
 Usage:
   python3 preprocess_isin.py <input.csv> <output.csv>
