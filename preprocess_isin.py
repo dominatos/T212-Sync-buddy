@@ -13,6 +13,9 @@ Usage:
 import sys
 import csv
 import json
+import urllib.request
+import urllib.error
+import time
 from pathlib import Path
 
 # Load ISIN mapping
@@ -66,7 +69,24 @@ TICKER_TO_ISIN = {v: k for k, v in ISIN_TO_TICKER.items()}
 PROBLEM_SUFFIXES = {'.L', '.XC'}
 REMAPPED_SYMBOLS = {'VEVEL.XC', 'VWRLL.XC'}
 
-def process_csv(input_file: str, output_file: str) -> int:
+def fetch_yahoo_ticker(isin: str) -> str:
+    """Query Yahoo Finance Search API for the ISIN."""
+    url = f"https://query2.finance.yahoo.com/v1/finance/search?q={isin}"
+    req = urllib.request.Request(
+        url, 
+        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    )
+    try:
+        with urllib.request.urlopen(req) as response:
+            data = json.loads(response.read().decode())
+            quotes = data.get("quotes", [])
+            if quotes:
+                return quotes[0].get("symbol")
+    except Exception:
+        pass
+    return None
+
+def process_csv(input_file: str, output_file: str) -> tuple[int, bool]:
     """
     Map tickers in a Trading212 export CSV to Yahoo Finance symbols and write the transformed rows to the specified output CSV.
     
@@ -77,7 +97,7 @@ def process_csv(input_file: str, output_file: str) -> int:
         output_file (str): Path where the transformed CSV will be written.
     
     Returns:
-        int: Number of tickers that were modified (explicit ISIN mappings or auto-suffix replacements).
+        tuple[int, bool]: A tuple containing the number of modified tickers and a boolean indicating if new mappings were fetched.
     """
     with open(input_file, 'r', encoding='utf-8') as infile:
         reader = csv.DictReader(infile)
@@ -86,6 +106,7 @@ def process_csv(input_file: str, output_file: str) -> int:
             raise ValueError("Empty CSV file")
 
         replaced_count = 0
+        mappings_changed = False
         rows_to_write = []
 
         for row in reader:
@@ -93,7 +114,19 @@ def process_csv(input_file: str, output_file: str) -> int:
             isin = row.get('ISIN', '').strip()
             currency = row.get('Currency (Price / share)', row.get('Currency', '')).strip()
 
-            # 1. Explicit Mapping Override
+            # 1. Fetch missing ISINs from Yahoo Finance
+            if isin and isin not in ISIN_TO_TICKER:
+                print(f"  🔍 Unmapped ISIN {isin}. Querying Yahoo Finance API...")
+                time.sleep(0.5)  # Be gentle to Yahoo API
+                fetched_ticker = fetch_yahoo_ticker(isin)
+                if fetched_ticker:
+                    print(f"  ✅ Auto-mapped {isin} -> {fetched_ticker}")
+                    ISIN_TO_TICKER[isin] = fetched_ticker
+                    mappings_changed = True
+                else:
+                    print(f"  ❌ Could not auto-resolve {isin}")
+
+            # 2. Explicit Mapping Override (including newly fetched ones)
             if isin and isin in ISIN_TO_TICKER:
                 new_ticker = ISIN_TO_TICKER[isin]
                 if ticker != new_ticker:
@@ -107,7 +140,7 @@ def process_csv(input_file: str, output_file: str) -> int:
                 rows_to_write.append(row)
                 continue
 
-            # 2. Dynamic Auto-Suffix logic for unmapped stocks
+            # 3. Dynamic Auto-Suffix logic for unmapped stocks
             if not (isin and isin in ISIN_TO_TICKER):
                 suffix = CURRENCY_SUFFIXES.get(currency)
                 if suffix and '.' not in ticker and currency != 'EUR':
@@ -125,7 +158,7 @@ def process_csv(input_file: str, output_file: str) -> int:
             for row in rows_to_write:
                 writer.writerow(row)
 
-    return replaced_count
+    return replaced_count, mappings_changed
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
@@ -140,7 +173,14 @@ if __name__ == "__main__":
         sys.exit(1)
 
     try:
-        count = process_csv(input_file, output_file)
+        count, changed = process_csv(input_file, output_file)
+        if changed and MAPPING_FILE:
+            sorted_mappings = dict(sorted(ISIN_TO_TICKER.items()))
+            with open(MAPPING_FILE, "w") as f:
+                json.dump(sorted_mappings, f, indent=2)
+                f.write("\n")
+            print("  💾 Saved new mappings to isin-mapping.json")
+            
         print(f"✅ Preprocessed CSV: {count} tickers mapped to Yahoo Finance symbols")
         print(f"   Output: {output_file}")
     except Exception as e:

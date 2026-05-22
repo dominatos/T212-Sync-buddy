@@ -266,9 +266,9 @@ process_account() {
     rm -f temp/*.csv temp/*.txt .state/docker_output.log  # Clean both CSVs, old test files, and leftover converter logs
     cp "$csv_file" "temp/$csv_name"
 
-    # Preprocess CSV: Apply ISIN→ticker mappings and exchange suffixes
-    if [[ -f "preprocess_isin.py" ]]; then
-      log_info "🔄 Preprocessing CSV (applying ISIN mappings and exchange suffixes)..."
+    # Preprocess CSV: Replace problematic tickers (.L, .XC) with ISINs for proper price lookup
+    if [[ "$platform" == "ghostfolio" && -f "preprocess_isin.py" ]]; then
+      log_info "🔄 Preprocessing CSV (replacing .L, .XC tickers with ISINs)..."
       python3 preprocess_isin.py "temp/$csv_name" "temp/${csv_name}.preprocessed" || {
         log_error "Preprocessing failed for $csv_name"
         rm -f "temp/$csv_name"

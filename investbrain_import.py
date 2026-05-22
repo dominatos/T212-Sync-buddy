@@ -33,6 +33,17 @@ _env_file = os.getenv("T212_ENV_FILE", str(_script_dir / ".env"))
 
 load_dotenv(dotenv_path=_env_file)
 
+# Load custom ISIN to Ticker mapping
+ISIN_MAPPING = {}
+try:
+    for p in [Path("/app/isin-mapping.json"), Path("isin-mapping.json"), Path(__file__).parent / "isin-mapping.json"]:
+        if p.exists():
+            with open(p, 'r') as f:
+                ISIN_MAPPING = json.load(f)
+            break
+except Exception as e:
+    print(f"Warning: Could not load isin-mapping.json: {e}")
+
 # --- LOG LEVEL ---
 _LOG_LEVEL_NAMES = {"TRACE": 0, "DEBUG": 1, "INFO": 2, "WARN": 3, "ERROR": 4, "FATAL": 5}
 _LOG_LEVEL = _LOG_LEVEL_NAMES.get(os.getenv("T212_LOG_LEVEL", "INFO").upper(), 2)
@@ -231,8 +242,9 @@ def parse_csv_row(row: dict) -> Optional[dict]:
 
     # Symbol - prefer Ticker, fallback to ISIN if ticker is empty
     symbol = row.get('Ticker', '').strip()
+    isin = row.get('ISIN', '').strip()
     if not symbol:
-        symbol = row.get('ISIN', '').strip()
+        symbol = isin
     if not symbol:
         raise ValueError(f"No symbol found for row: {row}")
 
@@ -272,7 +284,8 @@ def parse_csv_row(row: dict) -> Optional[dict]:
         'date': date,
         'transaction_type': transaction_type,
         'quantity': quantity,
-        'currency': currency
+        'currency': currency,
+        'isin': isin
     }
 
     # Set price based on transaction type
@@ -484,7 +497,15 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
             prev_date = None
 
             for row_num, transaction in enumerate(transactions, 1):
-                # 1. Deduplication Check
+                # 3. Explicit ISIN mapping (e.g. DHER -> DHER.DE)
+                isin = transaction.get('isin')
+                if isin and isin in ISIN_MAPPING:
+                    mapped_sym = ISIN_MAPPING[isin]
+                    if mapped_sym != transaction['symbol']:
+                        info(f"Mapped {transaction['symbol']} to {mapped_sym} based on ISIN {isin}")
+                        transaction['symbol'] = mapped_sym
+
+                # 4. Deduplication Check
                 symbol = transaction.get('symbol')
                 tx_type = transaction.get('transaction_type')
                 date = transaction.get('date', '')[:10]
