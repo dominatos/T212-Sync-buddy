@@ -564,17 +564,17 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                                         warn(f"💡 AUTODETECT: Symbol '{sym}' invalid. Automatically retrying with '{sym}{fallback_suffix}' fallback...")
                                         transaction['symbol'] = f"{sym}{fallback_suffix}"
                                         continue  # Retry with the modified symbol
-                                    else:
-                                        error(f"Failed to import row {row_num}: HTTP {response.status_code} - {response.text}")
-                                        warn(f"💡 ACTION REQUIRED: Symbol '{transaction['symbol']}' is invalid on Yahoo Finance.")
-                                        warn(f"   Please look up its ISIN and add it to 'isin-mapping.json' mapped to its correct suffix (e.g. '{transaction['symbol']}.DE' or '{transaction['symbol']}.L').")
-                                        error_count += 1
-                                        post_handled = True
-                                        break
+                                        
+                                    error(f"Failed to import row {row_num}: HTTP {response.status_code} - {response.text}")
+                                    warn(f"💡 ACTION REQUIRED: Symbol '{sym}' is invalid on Yahoo Finance.")
+                                    warn(f"   Please look up its ISIN and add it to 'isin-mapping.json' mapped to its correct suffix (e.g. '{sym}.DE' or '{sym}.L').")
+                                    error_count += 1
+                                    post_handled = True
+                                    break
                                 
                                 if "quantity must not be greater" in response.text:
                                     error(f"Failed to import row {row_num}: HTTP {response.status_code} - {response.text}")
-                                    warn(f"💡 NOTE: This quantity error is likely a cascading failure because an earlier BUY order for '{transaction['symbol']}' failed.")
+                                    warn(f"💡 NOTE: This quantity error is likely a cascading failure because an earlier BUY order for '{sym}' failed.")
                                     error_count += 1
                                     post_handled = True
                                     break

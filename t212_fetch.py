@@ -88,6 +88,7 @@ _script_dir = Path(__file__).resolve().parent
 _env_file = os.getenv("T212_ENV_FILE", str(_script_dir / ".env"))
 debug(f"Loading .env from: {_env_file}")
 load_dotenv(dotenv_path=_env_file)
+_LOG_LEVEL = _LOG_LEVEL_NAMES.get(os.getenv("T212_LOG_LEVEL", "INFO").upper(), 2)
 trace(f".env file exists: {os.path.exists(_env_file)}")
 
 # Configurable data root: set T212_DATA_DIR to override (default: ./)

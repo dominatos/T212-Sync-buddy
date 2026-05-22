@@ -341,10 +341,10 @@ class TestImportToInvestbrainDedupFailure(unittest.TestCase):
     @patch("investbrain_import.fetch_existing_fingerprints")
     @patch("investbrain_import.requests.post")
     def test_validate_only_skips_dedup(self, mock_post, mock_fetch):
-        """Validate-only mode does NOT call fetch_existing_fingerprints.
+        """Validate-only mode does NOT call fetch_existing_fingerprints or post.
 
-        Verifies that --validate-only bypasses the deduplication fetch entirely,
-        since no data is actually imported.
+        Verifies that --validate-only bypasses the deduplication fetch and POST
+        entirely, since no data is actually imported.
         """
         with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
             f.write("Action,Time,Ticker,No. of shares,Price / share,Currency (Price / share)\n")
@@ -356,8 +356,9 @@ class TestImportToInvestbrainDedupFailure(unittest.TestCase):
                 csv_path, PORTFOLIO, API_URL, "test-token", validate_only=True
             )
 
-            # fetch_existing_fingerprints should NOT have been called
+            # fetch_existing_fingerprints and POST should NOT have been called
             mock_fetch.assert_not_called()
+            mock_post.assert_not_called()
             self.assertEqual(success, 1)
             self.assertEqual(errors, 0)
         finally:
