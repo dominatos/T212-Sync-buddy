@@ -1,6 +1,10 @@
 #!/bin/bash
 set -e -o pipefail
 
+# Resolve the absolute path of the script directory and switch to it
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+cd "$SCRIPT_DIR" || exit 1
+
 # Load environment variables from .env file and export them
 if [ -f .env ]; then
   set -a
@@ -277,7 +281,7 @@ process_account() {
     if [[ "$platform" == "ghostfolio" ]]; then
       # Start the Docker-based converter (Auto-detects broker type from CSV contents)
       # Use HOST_SCRIPTS_DIR when running inside Docker (container paths ≠ host paths for socket mounts)
-      _mount_base="${HOST_SCRIPTS_DIR:-$(pwd)}"
+      _mount_base="${HOST_SCRIPTS_DIR:-$SCRIPT_DIR}"
 
       docker run --rm \
         --user "$(id -u):$(id -g)" \
