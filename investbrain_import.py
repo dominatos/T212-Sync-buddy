@@ -551,7 +551,36 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                                 continue
                             # Retries exhausted — fall through
                         else:
-                            # Permanent client error (4xx other than 429) — no retry
+                            # Permanent client error (4xx other than 429)
+                            
+                            # Autodetection hints for common validation errors
+                            if response.status_code == 422:
+                                if "symbol provided" in response.text:
+                                    sym = transaction.get('symbol', '')
+                                    curr = transaction.get('currency', '')
+                                    fallback_suffix = CURRENCY_SUFFIXES.get(curr)
+                                    
+                                    # If it failed without a suffix, try appending the currency's default suffix
+                                    if fallback_suffix and fallback_suffix not in sym and post_attempt < max_post_retries:
+                                        warn(f"💡 AUTODETECT: Symbol '{sym}' invalid. Automatically retrying with '{sym}{fallback_suffix}' fallback...")
+                                        transaction['symbol'] = f"{sym}{fallback_suffix}"
+                                        continue  # Retry with the modified symbol
+                                    else:
+                                        error(f"Failed to import row {row_num}: HTTP {response.status_code} - {response.text}")
+                                        warn(f"💡 ACTION REQUIRED: Symbol '{item['symbol']}' is invalid on Yahoo Finance.")
+                                        warn(f"   Please look up its ISIN and add it to 'isin-mapping.json' mapped to its correct suffix (e.g. '{item['symbol']}.DE' or '{item['symbol']}.L').")
+                                        error_count += 1
+                                        post_handled = True
+                                        break
+                                
+                                if "quantity must not be greater" in response.text:
+                                    error(f"Failed to import row {row_num}: HTTP {response.status_code} - {response.text}")
+                                    warn(f"💡 NOTE: This quantity error is likely a cascading failure because an earlier BUY order for '{item['symbol']}' failed.")
+                                    error_count += 1
+                                    post_handled = True
+                                    break
+
+                            # If not handled by autodetection retry/break above
                             error(f"Failed to import row {row_num}: HTTP {response.status_code} - {response.text}")
                             error_count += 1
                             post_handled = True  # Flag to skip exhaustion block below

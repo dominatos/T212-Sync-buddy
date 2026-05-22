@@ -256,6 +256,8 @@ def safe_parse_remaining(header_value: str | None, default: int = 1) -> int:
 
 
 MAX_429_RETRIES = 10  # Cap retries on 429 to prevent infinite blocking
+MAX_SERVER_ERROR_RETRIES = 3  # Cap retries on transient 5xx errors (500, 502, 503, 504)
+SERVER_ERROR_CODES = (500, 502, 503, 504)  # Transient server errors worth retrying
 
 
 class RateLimitExceeded(Exception):
@@ -305,22 +307,25 @@ def check_yahoo_rate_limit() -> bool:
     return False
 
 
-def safe_get(url: str, headers: dict, max_retries: int = MAX_429_RETRIES) -> requests.Response:
+def safe_get(url: str, headers: dict, max_retries: int = MAX_429_RETRIES, max_server_retries: int = MAX_SERVER_ERROR_RETRIES) -> requests.Response:
     """
-    Send an HTTP GET and transparently handle HTTP 429 rate-limit responses by waiting and retrying up to a configurable cap.
+    Send an HTTP GET and transparently handle HTTP 429 rate-limit responses and transient 5xx server errors by waiting and retrying.
     
     Parameters:
         url (str): The request URL.
         headers (dict): HTTP headers to include with the request.
         max_retries (int): Maximum number of 429 retries before aborting.
+        max_server_retries (int): Maximum number of 5xx retries before propagating the error.
     
     Returns:
-        requests.Response: The successful HTTP response (non-429) with status checks applied.
+        requests.Response: The successful HTTP response (non-429, non-5xx) with status checks applied.
     
     Raises:
         RateLimitExceeded: If more than `max_retries` HTTP 429 responses are received.
+        requests.HTTPError: If a non-retryable HTTP error is returned, or 5xx retries are exhausted.
     """
     retries = 0
+    server_retries = 0
     while True:
         debug(f"[GET] {url}")
         resp = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
@@ -337,32 +342,45 @@ def safe_get(url: str, headers: dict, max_retries: int = MAX_429_RETRIES) -> req
             warn(f"[RATE LIMIT] retry {retries}/{max_retries}, waiting {wait}s...")
             countdown_sleep(wait)
             continue  # retry the exact same request
+        if resp.status_code in SERVER_ERROR_CODES:
+            server_retries += 1
+            if server_retries > max_server_retries:
+                resp.raise_for_status()  # propagate the real HTTP error
+            wait = 60 * (2 ** (server_retries - 1))  # 60s, 120s, 240s
+            warn(f"[SERVER ERROR] {resp.status_code} on GET {url}, retry {server_retries}/{max_server_retries}, waiting {wait}s...")
+            countdown_sleep(wait)
+            continue
         resp.raise_for_status()
         return resp
 
 
-def safe_post(url: str, headers: dict, json_body: dict, max_retries: int = MAX_429_RETRIES) -> requests.Response:
+def safe_post(url: str, headers: dict, json_body: dict, max_retries: int = MAX_429_RETRIES, max_server_retries: int = MAX_SERVER_ERROR_RETRIES) -> requests.Response:
     """
-    Perform an HTTP POST and retry when the server responds with HTTP 429, honoring a maximum retry count.
+    Perform an HTTP POST and retry when the server responds with HTTP 429 or a transient 5xx error.
     
     This function issues a POST to `url` with `headers` and `json_body`. On HTTP 429 responses it will:
     - increment an internal retry counter and, if the counter exceeds `max_retries`, raise `RateLimitExceeded`;
     - otherwise compute a wait interval using the `x-ratelimit-reset` header (minimum 10s) or a 60s fallback, sleep, and retry the same request.
+    On transient 5xx responses (500, 502, 503, 504) it will:
+    - increment a separate server error counter and, if exhausted, propagate the HTTPError;
+    - otherwise wait with exponential backoff (60s, 120s, 240s) and retry.
     
     Parameters:
         url (str): The request URL.
         headers (dict): HTTP headers to send.
         json_body (dict): JSON body to include in the POST.
         max_retries (int): Maximum number of 429 retries before aborting.
+        max_server_retries (int): Maximum number of 5xx retries before propagating the error.
     
     Returns:
         requests.Response: The successful HTTP response (status code < 400).
     
     Raises:
         RateLimitExceeded: If HTTP 429 is received more than `max_retries` times.
-        requests.HTTPError: If a non-429 HTTP error status is returned (propagated from `raise_for_status()`).
+        requests.HTTPError: If a non-retryable HTTP error is returned, or 5xx retries are exhausted.
     """
     retries = 0
+    server_retries = 0
     while True:
         debug(f"[POST] {url}")
         resp = requests.post(url, headers=headers, json=json_body, timeout=REQUEST_TIMEOUT)
@@ -378,6 +396,14 @@ def safe_post(url: str, headers: dict, json_body: dict, max_retries: int = MAX_4
             warn(f"[RATE LIMIT] retry {retries}/{max_retries}, waiting {wait}s...")
             countdown_sleep(wait)
             continue  # retry the exact same request
+        if resp.status_code in SERVER_ERROR_CODES:
+            server_retries += 1
+            if server_retries > max_server_retries:
+                resp.raise_for_status()  # propagate the real HTTP error
+            wait = 60 * (2 ** (server_retries - 1))  # 60s, 120s, 240s
+            warn(f"[SERVER ERROR] {resp.status_code} on POST {url}, retry {server_retries}/{max_server_retries}, waiting {wait}s...")
+            countdown_sleep(wait)
+            continue
         resp.raise_for_status()
         return resp
 
