@@ -309,6 +309,7 @@ Run these from the repository root:
 python3 -m py_compile t212_fetch.py
 bash -n run-all.sh
 python3 -m unittest tests/test_t212_fetch.py -v
+python3 -m unittest tests/test_investbrain_import.py -v
 bats tests/test_run_all.bats
 ```
 
