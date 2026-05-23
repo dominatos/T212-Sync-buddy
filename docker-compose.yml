@@ -19,5 +19,7 @@ services:
       - ./out:/app/out
       - ./cache:/app/cache
       - ./temp:/app/temp
+      # Persist learned ISIN mappings across container restarts
+      - ./isin-mapping.json:/app/isin-mapping.json
       # .env needed by run-all.sh (source .env)
       - ./.env:/app/.env:ro
