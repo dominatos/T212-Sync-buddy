@@ -112,8 +112,8 @@ class TestFetchExistingFingerprintsRetry(unittest.TestCase):
         result = investbrain_import.fetch_existing_fingerprints(PORTFOLIO, API_URL, HEADERS)
 
         self.assertEqual(len(result), 2)
-        self.assertIn(("AAPL", "BUY", "2025-01-15", round(10.0, 5), round(150.0, 4)), result)
-        self.assertIn(("MSFT", "SELL", "2025-02-20", round(5.0, 5), round(300.0, 4)), result)
+        self.assertIn(("AAPL", "BUY", "2025-01-15", round(10.0, 4)), result)
+        self.assertIn(("MSFT", "SELL", "2025-02-20", round(5.0, 4)), result)
         self.assertEqual(mock_get.call_count, 1)
 
     @patch("investbrain_import.time.sleep")
@@ -409,7 +409,7 @@ class TestImportToInvestbrainDedupFailure(unittest.TestCase):
     def test_shifted_buy_duplicate_skipped(self, mock_post, mock_fetch):
         """Verifies that a BUY shifted to D-1 is skipped if it hits an existing fingerprint."""
         # Pre-seed a fingerprint for AAPL BUY on 2025-01-14
-        mock_fetch.return_value = {("AAPL", "BUY", "2025-01-14", 10.0, 150.0)}
+        mock_fetch.return_value = {("AAPL", "BUY", "2025-01-14", 10.0)}
         mock_post.return_value = _mock_response(201)
 
         with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:

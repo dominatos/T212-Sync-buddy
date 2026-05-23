@@ -532,8 +532,9 @@ class TestSafeGet(unittest.TestCase):
         # Should have been called max_retries + 1 times (initial + retries)
         self.assertEqual(mock_get.call_count, 3)
 
+    @patch("t212_fetch.countdown_sleep")
     @patch("t212_fetch.requests.get")
-    def test_500_raises_http_error(self, mock_get):
+    def test_500_raises_http_error(self, mock_get, mock_sleep):
         """Propagates HTTP 500 errors from Trading212 API as HTTPError.
 
         Non-rate-limit server errors must bubble up immediately so the pipeline

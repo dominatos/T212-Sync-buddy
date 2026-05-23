@@ -253,7 +253,7 @@ DOCKER_MOCK
     # CSV should be quarantined
     [ -f "input/quarantine/$csv_name" ]
     [ ! -f "input/$csv_name" ]
-    [[ "$output" == *"Quarantined"* ]]
+    [[ "$output" == *"quarantine"* ]]
 }
 
 
