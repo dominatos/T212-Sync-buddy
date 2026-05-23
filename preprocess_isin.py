@@ -10,6 +10,7 @@ Usage:
   python3 preprocess_isin.py <input.csv> <output.csv>
 """
 
+import socket
 import sys
 import csv
 import json
@@ -78,13 +79,18 @@ def fetch_yahoo_ticker(isin: str) -> str:
         headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     )
     try:
-        with urllib.request.urlopen(req) as response:
+        # timeout=10 prevents indefinite blocking on network stalls
+        with urllib.request.urlopen(req, timeout=10) as response:
             data = json.loads(response.read().decode())
             quotes = data.get("quotes", [])
             if quotes:
                 return quotes[0].get("symbol")
+    except socket.timeout:
+        logging.error(f"Timeout (10s) fetching ISIN {isin} from {url}")
     except urllib.error.HTTPError as e:
         logging.exception(f"HTTPError fetching ISIN {isin} from {url}. Status: {e.code}, Reason: {e.reason}")
+    except urllib.error.URLError as e:
+        logging.error(f"URLError fetching ISIN {isin} from {url}: {e.reason}")
     except json.JSONDecodeError as e:
         logging.exception(f"JSONDecodeError parsing response for ISIN {isin} from {url}")
     except Exception as e:
