@@ -67,18 +67,27 @@ def fatal(msg: str) -> None:
     _log(5, "FATAL", msg)
 
 # Countdown sleep function
-def countdown_sleep(seconds):
+def countdown_sleep(seconds: int) -> None:
     """
-    Sleep for the given number of seconds, pausing in one-second increments and (when TRACE logging is enabled) printing a per-second countdown.
-    
+    Sleep for the given number of seconds.
+
+    When TRACE logging is active (_LOG_LEVEL <= 0), sleeps in 1-second
+    increments and prints a per-second countdown so progress is visible
+    in real time. At any higher log level a single time.sleep(seconds)
+    call is used instead, avoiding unnecessary loop overhead during long
+    rate-limit waits (e.g. 60 s, 120 s, 240 s backoffs).
+
     Parameters:
-        seconds (int): Total seconds to sleep; sleeps in 1-second intervals and updates the optional countdown display.
+        seconds (int): Total seconds to sleep.
     """
-    for i in range(seconds, 0, -1):
-        if _LOG_LEVEL <= 0:  # TRACE only
+    if _LOG_LEVEL > 0:
+        # Non-TRACE path: single blocking sleep — no per-second loop overhead
+        time.sleep(seconds)
+    else:
+        # TRACE path: per-second countdown with live carriage-return display
+        for i in range(seconds, 0, -1):
             print(f"Sleeping {i}s...", end='\r', flush=True)
-        time.sleep(1)
-    if _LOG_LEVEL <= 0:
+            time.sleep(1)
         print("Sleeping 0s... Done.", flush=True)
 
 # --- CONFIGURATION ---
@@ -279,8 +288,9 @@ def check_t212_rate_limit(headers: dict) -> bool:
     try:
         resp = requests.get(f"{BASE_URL}/equity/history/orders?limit=1", headers=headers, timeout=REQUEST_TIMEOUT)
         return resp.status_code == 429
-    except Exception:
+    except Exception as e:
         # If request fails for other reasons, assume not rate-limited
+        trace(f"T212 rate-limit check failed: {e}")
         return False
 
 

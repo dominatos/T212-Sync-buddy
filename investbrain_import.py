@@ -590,6 +590,11 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                                     if fallback_suffix and fallback_suffix not in sym and post_attempt < max_post_retries:
                                         warn(f"💡 AUTODETECT: Symbol '{sym}' invalid. Automatically retrying with '{sym}{fallback_suffix}' fallback...")
                                         transaction['symbol'] = f"{sym}{fallback_suffix}"
+                                        # Recompute fingerprint using the updated symbol so that if the retry
+                                        # succeeds, existing_fingerprints.add(fingerprint) (line ~566) stores
+                                        # the corrected symbol (e.g. "DHER.DE") rather than the stale original
+                                        # ("DHER"). Uses the same 4-field formula as the initial build above.
+                                        fingerprint = (transaction['symbol'], tx_type, date, qty_fingerprint)
                                         continue  # Retry with the modified symbol
                                         
                                     error(f"Failed to import row {row_num}: HTTP {response.status_code} - {response.text}")
