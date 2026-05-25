@@ -9,6 +9,7 @@ Type=oneshot
 User=YOUR_USER
 WorkingDirectory=/path/to/T212-Sync-buddy
 Environment=HOST_SCRIPTS_DIR=/path/to/T212-Sync-buddy
+ExecStartPre=/usr/bin/docker compose build
 ExecStart=/usr/bin/docker compose run --rm t212-sync-buddy
 StandardOutput=journal
 StandardError=journal

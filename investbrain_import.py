@@ -1,0 +1,707 @@
+#!/usr/bin/env python3
+"""
+Trading212 CSV → Investbrain API Importer
+-----------------------------------------
+This tool imports transaction data from Trading212 CSV exports into Investbrain.
+
+Features:
+- CSV parsing with column mapping to Investbrain transaction format
+- API integration with Bearer token authentication
+- Support for BUY/SELL transactions
+- Currency conversion handling
+- Validation and error handling
+"""
+
+import argparse
+import requests
+import csv
+import os
+import sys
+import json
+import time
+import traceback
+from typing import Optional
+from pathlib import Path
+from datetime import datetime, timedelta, timezone
+from dotenv import load_dotenv
+
+
+
+# Load environment variables
+_script_dir = Path(__file__).resolve().parent
+_env_file = os.getenv("T212_ENV_FILE", str(_script_dir / ".env"))
+
+load_dotenv(dotenv_path=_env_file)
+
+# Load custom ISIN to Ticker mapping
+ISIN_MAPPING = {}
+try:
+    for p in [Path("/app/isin-mapping.json"), Path("isin-mapping.json"), Path(__file__).parent / "isin-mapping.json"]:
+        if p.exists():
+            with open(p, 'r') as f:
+                ISIN_MAPPING = json.load(f)
+            break
+except Exception as e:
+    print(f"Warning: Could not load isin-mapping.json: {e}")
+
+# --- LOG LEVEL ---
+_LOG_LEVEL_NAMES = {"TRACE": 0, "DEBUG": 1, "INFO": 2, "WARN": 3, "ERROR": 4, "FATAL": 5}
+_LOG_LEVEL = _LOG_LEVEL_NAMES.get(os.getenv("T212_LOG_LEVEL", "INFO").upper(), 2)
+
+def _log(level: int, tag: str, msg: str) -> None:
+    """
+    Log a message to stdout when the configured log level is at or above `level`.
+    
+    Parameters:
+        level (int): Severity level required for this message to be emitted.
+        tag (str): Short identifier shown in square brackets before the message.
+        msg (str): Text of the log message to emit.
+    """
+    if level >= _LOG_LEVEL:
+        print(f"[{tag}] {msg}")
+
+def trace(msg: str) -> None:
+    """
+    Log a message at the TRACE level.
+
+    Parameters:
+        msg (str): The message to log.
+    """
+    _log(0, "TRACE", msg)
+
+def debug(msg: str) -> None:
+    """
+    Log a message at the debug verbosity level.
+
+    Parameters:
+        msg (str): Message to log.
+    """
+    _log(1, "DEBUG", msg)
+
+def info(msg: str) -> None:
+    """
+    Log an informational message according to the configured log level.
+
+    Parameters:
+        msg (str): Message text to log.
+    """
+    _log(2, "INFO", msg)
+
+def warn(msg: str) -> None:
+    """
+    Log a warning-level message.
+
+    Parameters:
+        msg (str): The text to emit at the warning log level.
+    """
+    _log(3, "WARN", msg)
+
+def error(msg: str) -> None:
+    """
+    Log a message at ERROR level.
+
+    Parameters:
+        msg (str): The message to log.
+    """
+    _log(4, "ERROR", msg)
+
+def fatal(msg: str) -> None:
+    """
+    Log a message at fatal severity.
+
+    Parameters:
+        msg (str): The message to log.
+    """
+    _log(5, "FATAL", msg)
+
+def _load_currency_suffixes() -> dict:
+    paths = [
+        Path("/app/currency-suffixes.json"),
+        Path(__file__).resolve().parent / "currency-suffixes.json",
+        Path("currency-suffixes.json"),
+    ]
+    for p in paths:
+        if p.exists():
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                warn(f"Failed to load {p}: {e}")
+    return {}
+
+CURRENCY_SUFFIXES = _load_currency_suffixes()
+
+debug(f"Loading .env from: {_env_file}")
+trace(f".env exists: {os.path.exists(_env_file)}")
+
+# Debug: Show key environment variables explicitly
+trace(f"  T212_ENV_FILE={_env_file}")
+trace(f"  T212_LOG_LEVEL={os.getenv('T212_LOG_LEVEL', 'INFO')}")
+trace(f"  INVESTBRAIN_URL={os.getenv('INVESTBRAIN_URL')}")
+trace(f"  INVESTBRAIN_SAME_DAY_DELAY_SECONDS={os.getenv('INVESTBRAIN_SAME_DAY_DELAY_SECONDS', '2')}")
+trace(f"  INVESTBRAIN_API_TOKEN={'***' if os.getenv('INVESTBRAIN_API_TOKEN') else 'None'}")
+
+REQUEST_TIMEOUT = (30, 200)  # (connect_timeout, read_timeout)
+SAME_DAY_DELAY_SECONDS = float(os.getenv("INVESTBRAIN_SAME_DAY_DELAY_SECONDS", "2"))  # delay between same-symbol same-day transactions
+
+def get_investbrain_headers(api_token: str) -> dict:
+    """
+    Create HTTP headers with a Bearer Authorization for Investbrain API.
+    
+    The provided token will have surrounding whitespace removed before being inserted
+    into the Authorization header.
+    
+    Parameters:
+        api_token (str): The API token to use for the Bearer Authorization. Surrounding
+            whitespace is stripped; empty or missing tokens produce an Authorization
+            header with an empty bearer value.
+    
+    Returns:
+        dict: HTTP headers including `Authorization: Bearer <token>`, `Content-Type: application/json`,
+        and `Accept: application/json`.
+    """
+    # Strip whitespace from token - critical for .env file loading
+    api_token = api_token.strip() if api_token else ""
+    trace(f"Creating headers with token: set (length={len(api_token)})")
+    headers = {
+        "Authorization": f"Bearer {api_token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+    trace(f"Headers created: {list(headers.keys())}")
+    return headers
+
+def map_transaction_type(action: str) -> Optional[str]:
+    """
+    Map a Trading212 action string to the corresponding Investbrain transaction type.
+    
+    Recognizes case-insensitive action values: "market buy", "limit buy", "buy" → "BUY";
+    "market sell", "limit sell", "sell" → "SELL". Input is normalized by trimming
+    whitespace and lowercasing before matching.
+    
+    Returns:
+        'BUY' if the action denotes a buy, 'SELL' if the action denotes a sell,
+        `None` for non-trade or unrecognized actions.
+    """
+    action_lower = action.lower().strip()
+    if action_lower in ['market buy', 'limit buy', 'buy']:
+        return 'BUY'
+    elif action_lower in ['market sell', 'limit sell', 'sell']:
+        return 'SELL'
+    else:
+        # Skip non-trade actions like deposits, withdrawals, dividends, etc.
+        return None
+
+def parse_csv_row(row: dict) -> Optional[dict]:
+    """
+    Convert a Trading212 CSV row into an Investbrain transaction dictionary.
+    
+    Parses Action, Time, Ticker/ISIN, quantity, price, and currency; normalizes date to YYYY-MM-DD, adjusts GBX/GBp prices to GBP, and appends exchange suffixes for common markets. Returns None for non-trade actions (deposits, dividends, etc.). Raises ValueError for trade rows with missing or malformed required fields.
+    
+    Parameters:
+        row (dict): A single CSV row as a mapping of column names to string values.
+    
+    Returns:
+        dict or None: Investbrain transaction payload with keys `symbol`, `date`, `transaction_type`, `quantity`, `currency`, and either `cost_basis` (for BUY) or `sale_price` (for SELL); `None` if the row is a non-trade action.
+    
+    Raises:
+        ValueError: If a trade row has a missing/unparseable date, symbol, quantity, or price.
+    """
+    # Map Trading212 columns to Investbrain fields
+    action = row.get('Action', '').strip()
+    transaction_type = map_transaction_type(action)
+
+    if transaction_type is None:
+        return None  # Non-trade row (deposit, dividend, etc.) — skip silently
+
+    # Extract required fields
+    time_str = row.get('Time', '').strip()
+    if not time_str:
+        return None
+
+    # Parse date - Trading212 format is typically YYYY-MM-DD HH:MM:SS
+    try:
+        # Handle various date formats
+        if 'T' in time_str:
+            # ISO format with T — fromisoformat yields aware datetime when offset is present
+            date_obj = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+        else:
+            # Try common formats; attach UTC so the result is timezone-aware
+            for fmt in ['%Y-%m-%d %H:%M:%S', '%d/%m/%Y %H:%M:%S', '%m/%d/%Y %H:%M:%S']:
+                try:
+                    date_obj = datetime.strptime(time_str, fmt).replace(tzinfo=timezone.utc)
+                    break
+                except ValueError:
+                    continue
+            else:
+                raise ValueError(f"Could not parse date: {time_str}")
+    except ValueError as e:
+        raise ValueError(f"Error parsing date '{time_str}': {e}") from e
+
+    date = date_obj.strftime('%Y-%m-%d')
+
+    # Symbol - prefer Ticker, fallback to ISIN if ticker is empty
+    symbol = row.get('Ticker', '').strip()
+    isin = row.get('ISIN', '').strip()
+    if not symbol:
+        symbol = isin
+    if not symbol:
+        raise ValueError(f"No symbol found for row: {row}")
+
+    # Quantity
+    quantity_str = row.get('No. of shares', '').strip()
+    try:
+        quantity = float(quantity_str)
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"Invalid quantity '{quantity_str}' for symbol {symbol}") from e
+
+    # Price per share
+    price_str = row.get('Price / share', '').strip()
+    try:
+        price = float(price_str)
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"Invalid price '{price_str}' for symbol {symbol}") from e
+
+    # Currency - use the currency from "Currency (Price / share)" or fallback
+    currency = row.get('Currency (Price / share)', row.get('Currency', 'USD')).strip()
+    if not currency:
+        currency = 'USD'
+        
+    # Investbrain uses Yahoo Finance which expects GBP, not GBX (pence).
+    # Convert pence to pounds for correct cost basis/sales price.
+    if currency == 'GBX' or currency == 'GBp':
+        currency = 'GBP'
+        price = price / 100.0
+        
+    # Apply dynamic auto-suffix logic based on currency
+    suffix = CURRENCY_SUFFIXES.get(currency)
+    if suffix and '.' not in symbol and currency != 'EUR':
+        symbol = f"{symbol}{suffix}"
+
+    # Build transaction data
+    transaction = {
+        'symbol': symbol,
+        'date': date,
+        'transaction_type': transaction_type,
+        'quantity': quantity,
+        'currency': currency,
+        'isin': isin
+    }
+
+    # Set price based on transaction type
+    if transaction_type == 'BUY':
+        transaction['cost_basis'] = price
+    elif transaction_type == 'SELL':
+        transaction['sale_price'] = price
+
+    return transaction
+
+def fetch_existing_fingerprints(portfolio_id: str, api_url: str, headers: dict,
+                                  max_retries: int = 3, backoff_base: float = 2.0) -> set:
+    """
+    Fetch existing Investbrain transactions for a portfolio and return deduplication fingerprints.
+    
+    Retrieves all pages of transactions from the Investbrain `/api/transaction` endpoint and builds a set of tuples
+    (symbol, transaction_type, date (YYYY-MM-DD), rounded_quantity (4 decimals)).
+    Price is excluded from the fingerprint because Investbrain may auto-convert currencies (modifying the stored price).
+    Retries transient failures (HTTP 429, 5xx, and network errors) up to `max_retries` using exponential backoff
+    (backoff_base * 2**attempt). Permanent 4xx (other than 429) errors abort immediately.
+    
+    Parameters:
+        portfolio_id (str): Investbrain portfolio identifier.
+        api_url (str): Base Investbrain API URL.
+        headers (dict): HTTP headers to include (e.g., authorization).
+        max_retries (int): Maximum number of retry attempts for transient failures (default 3).
+        backoff_base (float): Base backoff seconds multiplied by 2**attempt for retries (default 2.0).
+    
+    Returns:
+        set: A set of tuples (symbol, transaction_type, date, quantity) used for deduplication.
+    
+    Raises:
+        RuntimeError: On permanent client errors or if transient retries are exhausted while fetching pages.
+    """
+    fingerprints = set()
+    page = 1
+    info("🔍 Fetching existing Investbrain transactions for deduplication...")
+    
+    while True:
+        url = f"{api_url.rstrip('/')}/api/transaction?portfolio_id={portfolio_id}&page={page}"
+        trace(f"Fetching page {page} of existing transactions...")
+
+        # --- Retry loop for transient failures on this page ---
+        last_error = None
+        response = None
+        for attempt in range(max_retries + 1):
+            try:
+                response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+
+                if response.status_code == 200:
+                    # Success — clear any previous transient error and exit retry loop
+                    last_error = None
+                    break
+                elif response.status_code == 429 or response.status_code >= 500:
+                    # Transient server / rate-limit error — retry with backoff
+                    last_error = f"HTTP {response.status_code}"
+                    if attempt < max_retries:
+                        wait = backoff_base * (2 ** attempt)
+                        warn(f"Transient error ({last_error}) fetching transactions page {page}, "
+                             f"retry {attempt + 1}/{max_retries} in {wait}s")
+                        time.sleep(wait)
+                        continue
+                    # Retries exhausted — fall through to raise below
+                else:
+                    # Permanent client error (4xx other than 429) — abort deterministically
+                    raise RuntimeError(
+                        f"Permanent error fetching existing transactions: HTTP {response.status_code}"
+                    )
+
+            except requests.RequestException as e:
+                # Network-level error (timeout, DNS, connection reset, etc.) — retry with backoff
+                last_error = str(e)
+                if attempt < max_retries:
+                    wait = backoff_base * (2 ** attempt)
+                    warn(f"Network error fetching transactions page {page}: {e}, "
+                         f"retry {attempt + 1}/{max_retries} in {wait}s")
+                    time.sleep(wait)
+                    continue
+                # Retries exhausted — fall through to raise below
+
+        # If all retries exhausted, raise so the import aborts cleanly
+        if last_error is not None:
+            raise RuntimeError(
+                f"Failed to fetch existing transactions after {max_retries} retries: {last_error}"
+            )
+
+        # --- Process the successful response for this page ---
+        data = response.json()
+        transactions = data.get('data', [])
+        if not transactions:
+            break
+            
+        for tx in transactions:
+            symbol = tx.get('symbol')
+            tx_type = tx.get('transaction_type')
+            # Date comes back as 'YYYY-MM-DD' from API
+            date = tx.get('date', '')[:10]
+            # Investbrain may auto-convert currencies (modifying the price) and truncate quantities.
+            # To ensure reliable deduplication against CSV data, we exclude price and round qty to 4 decimal places.
+            qty_fingerprint = round(float(tx.get('quantity') or 0), 4)
+            
+            fingerprints.add((symbol, tx_type, date, qty_fingerprint))
+            
+        meta = data.get('meta', {})
+        # Stop if we've reached the last page or next link is null
+        if meta.get('current_page') == meta.get('last_page') or not data.get('links', {}).get('next'):
+            break
+        page += 1
+            
+    debug(f"Found {len(fingerprints)} existing transactions for deduplication.")
+    return fingerprints
+
+def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_token: str, validate_only: bool = False) -> tuple[int, int, int, int]:
+    """
+    Import Trading212 transactions from a CSV file into the Investbrain portfolio.
+    
+    Parses the CSV, normalizes and deduplicates transactions, applies the intraday BUY->D-1 workaround when needed, and posts each transaction to the Investbrain `/api/transaction` endpoint (unless `validate_only` is True, in which case imports are simulated and not sent).
+    
+    Parameters:
+        csv_path (str): Path to the Trading212 CSV file.
+        portfolio_id (str): Investbrain portfolio identifier to attach transactions to.
+        api_url (str): Base URL of the Investbrain API.
+        api_token (str): Bearer token used for Investbrain authentication.
+        validate_only (bool): If True, do not POST to the API; report which transactions would be imported.
+    
+    Returns:
+        tuple[int, int, int, int]: A tuple of (success_count, error_count, non_trade_skipped_count, dedup_skipped_count) where
+            - success_count is the number of transactions successfully imported (or would be imported in validate mode),
+            - error_count is the number of transactions that failed to import,
+            - non_trade_skipped_count is the number of rows skipped because they were not trades,
+            - dedup_skipped_count is the number of rows skipped because they were already imported.
+    """
+    info(f"Processing CSV: {csv_path}")
+    trace("import_to_investbrain called with:")
+    trace(f"  csv_path={csv_path}")
+    trace("  portfolio_id=***")
+    trace(f"  api_url={api_url}")
+    trace(f"  api_token: set (length={len(api_token)})")
+    trace(f"  validate_only={validate_only}")
+
+    headers = get_investbrain_headers(api_token)
+    success_count = 0
+    error_count = 0
+    non_trade_skipped_count = 0
+    dedup_skipped_count = 0
+
+    existing_fingerprints = set()
+    if not validate_only:
+        try:
+            existing_fingerprints = fetch_existing_fingerprints(portfolio_id, api_url, headers)
+        except RuntimeError as e:
+            # Deduplication must succeed fully or fail deterministically.
+            # Proceeding without complete fingerprints risks creating duplicate transactions.
+            error(f"Aborting import — deduplication fetch failed: {e}")
+            return 0, 1, 0, 0
+
+    try:
+        with open(csv_path, 'r', encoding='utf-8') as f:
+            # Detect CSV dialect (delimiter, quoting, etc.)
+            sample = f.read(4096)
+            f.seek(0)
+            
+            try:
+                sniffer = csv.Sniffer()
+                dialect = sniffer.sniff(sample)
+            except csv.Error:
+                # Fallback: assume comma-delimited
+                dialect = 'excel'
+            
+            reader = csv.DictReader(f, dialect=dialect)
+            trace("CSV reader created, dialect detected")
+
+            # 1. Parse all valid transactions into a list first
+            transactions = []
+            for row in reader:
+                try:
+                    tx = parse_csv_row(row)
+                except ValueError as e:
+                    warn(f"Skipping malformed row: {e}")
+                    error_count += 1
+                    continue
+                if tx:
+                    tx['portfolio_id'] = portfolio_id
+                    transactions.append(tx)
+                else:
+                    non_trade_skipped_count += 1
+            
+            # 2. Fix intraday conflicts (shift BUYs to D-1 if there's a same-day SELL)
+            # This is a workaround for Investbrain's validation logic which ignores same-day buys.
+            # (Investbrain rule uses 'whereDate(date, <, sell_date)')
+            sym_date_has_sell = set()
+            for tx in transactions:
+                if tx['transaction_type'] == 'SELL':
+                    sym_date_has_sell.add((tx['symbol'], tx['date']))
+
+            for tx in transactions:
+                if tx['transaction_type'] == 'BUY' and (tx['symbol'], tx['date']) in sym_date_has_sell:
+                    original_date = tx['date']
+                    dt = datetime.strptime(original_date, '%Y-%m-%d')
+                    shifted_dt = dt - timedelta(days=1)
+                    tx['date'] = shifted_dt.strftime('%Y-%m-%d')
+                    debug(f"Applied Intraday Workaround: Shifted {tx['symbol']} BUY from {original_date} to {tx['date']}")
+
+            # 3. Import the transactions sequentially
+            prev_symbol = None
+            prev_date = None
+
+            for row_num, transaction in enumerate(transactions, 1):
+                # 3. Explicit ISIN mapping (e.g. DHER -> DHER.DE)
+                isin = transaction.get('isin')
+                if isin and isin in ISIN_MAPPING:
+                    mapped_sym = ISIN_MAPPING[isin]
+                    if mapped_sym != transaction['symbol']:
+                        info(f"Mapped {transaction['symbol']} to {mapped_sym} based on ISIN {isin}")
+                        transaction['symbol'] = mapped_sym
+
+                # 4. Deduplication Check
+                symbol = transaction.get('symbol')
+                tx_type = transaction.get('transaction_type')
+                date = transaction.get('date', '')[:10]
+                
+                # Use a robust fingerprint: exclude price (due to Investbrain auto-FX conversion)
+                # and round quantity to 4 decimal places (to handle Investbrain DB truncation differences)
+                qty_fingerprint = round(float(transaction.get('quantity', 0)), 4)
+                fingerprint = (symbol, tx_type, date, qty_fingerprint)
+                
+                if not validate_only and fingerprint in existing_fingerprints:
+                    info(f"⏭️ Skipping duplicate: {symbol} {tx_type} {transaction.get('quantity')} on {date}")
+                    dedup_skipped_count += 1
+                    continue
+
+                # 2. Delay for same-symbol same-day transactions to avoid race conditions
+                curr_symbol = transaction.get('symbol')
+                curr_date = transaction.get('date', '')[:10]
+                if (not validate_only
+                        and prev_symbol == curr_symbol
+                        and prev_date == curr_date
+                        and SAME_DAY_DELAY_SECONDS > 0):
+                    debug(f"Same-day same-symbol ({curr_symbol} on {curr_date}), delaying {SAME_DAY_DELAY_SECONDS}s")
+                    time.sleep(SAME_DAY_DELAY_SECONDS)
+                prev_symbol = curr_symbol
+                prev_date = curr_date
+
+                if validate_only:
+                    info(f"[VALIDATE] Would import: {transaction}")
+                    success_count += 1
+                    continue
+
+                # Send to Investbrain API — with retry for transient failures
+                # Retry policy (consistent with fetch_existing_fingerprints):
+                #   - Transient errors (HTTP 429, 5xx, network exceptions): retry up to
+                #     max_post_retries times with exponential backoff.
+                #   - Permanent client errors (4xx other than 429): count as error immediately.
+                #   - Retries exhausted: count as error, continue to next transaction
+                #     (one failed POST should not block the rest of the import).
+                max_post_retries = 3
+                post_backoff_base = 2.0
+                url = f"{api_url.rstrip('/')}/api/transaction"
+                post_last_error = None
+                post_handled = False
+
+                for post_attempt in range(max_post_retries + 1):
+                    try:
+                        trace(f"POST transaction {row_num}: {transaction.get('symbol')} "
+                              f"{transaction.get('transaction_type')} (attempt {post_attempt + 1})")
+
+                        response = requests.post(url, json=transaction, headers=headers,
+                                                 timeout=REQUEST_TIMEOUT)
+                        trace(f"  Response: {response.status_code}")
+
+                        if response.status_code in [200, 201]:
+                            # Success — record and break out of retry loop
+                            info(f"Imported: {transaction['symbol']} {transaction['transaction_type']} "
+                                 f"{transaction['quantity']} @ "
+                                 f"{transaction.get('cost_basis', transaction.get('sale_price'))} "
+                                 f"{transaction['currency']}")
+                            success_count += 1
+                            existing_fingerprints.add(fingerprint)
+                            post_handled = True
+                            break
+                        elif response.status_code == 429 or response.status_code >= 500:
+                            # Transient server / rate-limit error — retry with backoff
+                            post_last_error = f"HTTP {response.status_code} - {response.text}"
+                            if post_attempt < max_post_retries:
+                                wait = post_backoff_base * (2 ** post_attempt)
+                                warn(f"Transient error ({response.status_code}) importing row {row_num}, "
+                                     f"retry {post_attempt + 1}/{max_post_retries} in {wait}s")
+                                time.sleep(wait)
+                                continue
+                            # Retries exhausted — fall through
+                        else:
+                            # Permanent client error (4xx other than 429)
+                            
+                            # Autodetection hints for common validation errors
+                            if response.status_code == 422:
+                                if "symbol provided" in response.text:
+                                    sym = transaction.get('symbol', '')
+                                    curr = transaction.get('currency', '')
+                                    fallback_suffix = CURRENCY_SUFFIXES.get(curr)
+                                    
+                                    # If it failed without a suffix, try appending the currency's default suffix
+                                    if fallback_suffix and fallback_suffix not in sym and post_attempt < max_post_retries:
+                                        warn(f"💡 AUTODETECT: Symbol '{sym}' invalid. Automatically retrying with '{sym}{fallback_suffix}' fallback...")
+                                        transaction['symbol'] = f"{sym}{fallback_suffix}"
+                                        # Recompute fingerprint using the updated symbol so that if the retry
+                                        # succeeds, existing_fingerprints.add(fingerprint) (line ~566) stores
+                                        # the corrected symbol (e.g. "DHER.DE") rather than the stale original
+                                        # ("DHER"). Uses the same 4-field formula as the initial build above.
+                                        fingerprint = (transaction['symbol'], tx_type, date, qty_fingerprint)
+                                        continue  # Retry with the modified symbol
+                                        
+                                    error(f"Failed to import row {row_num}: HTTP {response.status_code} - {response.text}")
+                                    warn(f"💡 ACTION REQUIRED: Symbol '{sym}' is invalid on Yahoo Finance.")
+                                    warn(f"   Please look up its ISIN and add it to 'isin-mapping.json' mapped to its correct suffix (e.g. '{sym}.DE' or '{sym}.L').")
+                                    error_count += 1
+                                    post_handled = True
+                                    break
+                                
+                                if "quantity must not be greater" in response.text:
+                                    error(f"Failed to import row {row_num}: HTTP {response.status_code} - {response.text}")
+                                    warn(f"💡 NOTE: This quantity error is likely a cascading failure because an earlier BUY order for '{sym}' failed.")
+                                    error_count += 1
+                                    post_handled = True
+                                    break
+
+                            # If not handled by autodetection retry/break above
+                            error(f"Failed to import row {row_num}: HTTP {response.status_code} - {response.text}")
+                            error_count += 1
+                            post_handled = True  # Flag to skip exhaustion block below
+                            break
+
+                    except requests.RequestException as e:
+                        # Network-level error — retry with backoff
+                        post_last_error = str(e)
+                        if post_attempt < max_post_retries:
+                            wait = post_backoff_base * (2 ** post_attempt)
+                            warn(f"Network error importing row {row_num}: {e}, "
+                                 f"retry {post_attempt + 1}/{max_post_retries} in {wait}s")
+                            time.sleep(wait)
+                            continue
+                        # Retries exhausted — fall through
+
+                # If all retries were exhausted without success or permanent error
+                if not post_handled and post_last_error is not None:
+                    error(f"Failed to import row {row_num} after {max_post_retries} retries: {post_last_error}")
+                    error_count += 1
+
+    except FileNotFoundError:
+        error(f"CSV file not found: {csv_path}")
+        if error_count == 0 and success_count == 0 and non_trade_skipped_count == 0 and dedup_skipped_count == 0:
+            error_count = 1
+        return success_count, error_count, non_trade_skipped_count, dedup_skipped_count
+    except Exception as e:
+        error(f"Error processing CSV {csv_path}: {e}\n{traceback.format_exc()}")
+        error_count += 1
+        return success_count, error_count, non_trade_skipped_count, dedup_skipped_count
+
+    return success_count, error_count, non_trade_skipped_count, dedup_skipped_count
+
+def main():
+    """
+    CLI entry point that parses command-line arguments, validates required configuration, runs the import process, and reports results.
+    
+    Parses positional and optional flags (CSV path, portfolio ID, API URL, API token, and validate-only mode), ensures the Investbrain API URL and token are available (via environment or flags), invokes the import workflow, logs summary counts, and returns an appropriate process exit code.
+    
+    Returns:
+        int: 0 on success (no import errors), 1 if required configuration is missing or any errors occurred during import.
+    """
+    parser = argparse.ArgumentParser(description="Trading212 CSV → Investbrain API Importer")
+    parser.add_argument("csv_file", help="Path to the Trading212 CSV file")
+    parser.add_argument("portfolio_id", help="Investbrain portfolio ID")
+    parser.add_argument("--validate-only", action="store_true", help="Validate CSV without importing")
+    parser.add_argument("--api-url", default=os.getenv("INVESTBRAIN_URL"), help="Investbrain API URL")
+    parser.add_argument("--api-token", default=os.getenv("INVESTBRAIN_API_TOKEN"), help="Investbrain API token")
+
+    args = parser.parse_args()
+    
+    # Strip whitespace from token (critical for .env file loading)  
+    if args.api_token:
+        args.api_token = args.api_token.strip()
+    
+    trace("main() called with arguments:")
+    trace(f"  csv_file={args.csv_file}")
+    trace("  portfolio_id=***")
+    trace(f"  validate_only={args.validate_only}")
+    trace(f"  api_url={args.api_url}")
+    trace(f"  api_token: {'set' if args.api_token else 'None'} (length={len(args.api_token) if args.api_token else 0})")
+
+    if not args.api_url:
+        fatal("INVESTBRAIN_URL not set in environment or --api-url")
+        trace(f"INVESTBRAIN_URL from os.getenv: {os.getenv('INVESTBRAIN_URL')}")
+        return 1
+
+    if not args.api_token:
+        fatal("INVESTBRAIN_API_TOKEN not set in environment or --api-token")
+        trace(f"INVESTBRAIN_API_TOKEN from os.getenv: {'set' if os.getenv('INVESTBRAIN_API_TOKEN') else 'None'}")
+        return 1
+
+    info(f"Investbrain Import {'(VALIDATE ONLY)' if args.validate_only else ''}")
+    info(f"  API URL: {args.api_url}")
+    debug("  Portfolio ID: ***")
+    trace(f"  API Token: set (length={len(args.api_token) if args.api_token else 0})")
+
+    success_count, error_count, non_trade_skipped_count, dedup_skipped_count = import_to_investbrain(
+        args.csv_file,
+        args.portfolio_id,
+        args.api_url,
+        args.api_token,
+        args.validate_only
+    )
+
+    info(f"Results: {success_count} successful, {non_trade_skipped_count} skipped (non-trade), {dedup_skipped_count} skipped (duplicate), {error_count} errors")
+
+    if error_count > 0:
+        return 1
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())

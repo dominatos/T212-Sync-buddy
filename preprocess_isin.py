@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
 """
-CSV ISIN Preprocessor for Trading212 Exports
+CSV Ticker Mapper for Trading212 Exports
 
-Replaces ticker symbols with ISINs for stocks that don't have proper price lookup
-in Ghostfolio (UK and IE stocks, remapped symbols). This ensures NYSE/LSE stocks
-resolve correctly via ISIN-based price lookups.
+Replaces problematic ticker symbols with their direct Yahoo Finance equivalents 
+(e.g. appending .L for LSE stocks) prior to conversion for both Ghostfolio and Investbrain.
+This ensures they resolve correctly, bypassing unreliable ISIN lookups.
 
 Usage:
   python3 preprocess_isin.py <input.csv> <output.csv>
 """
 
+import socket
 import sys
 import csv
 import json
+import logging
+import urllib.request
+import urllib.error
+import time
 from pathlib import Path
 
 # Load ISIN mapping
@@ -38,6 +43,27 @@ if not MAPPING_FILE:
 with open(MAPPING_FILE) as f:
     ISIN_TO_TICKER = json.load(f)
 
+# Load Currency Suffixes
+SUFFIX_FILE = None
+for p in [Path("/app/currency-suffixes.json"), Path(__file__).parent / "currency-suffixes.json", Path("currency-suffixes.json")]:
+    if p.exists():
+        SUFFIX_FILE = p
+        break
+
+if not SUFFIX_FILE:
+    print(f"❌ currency-suffixes.json not found in any expected location")
+    sys.exit(1)
+
+try:
+    with open(SUFFIX_FILE) as f:
+        CURRENCY_SUFFIXES = json.load(f)
+except json.JSONDecodeError as e:
+    print(f"❌ Error parsing {SUFFIX_FILE}: Malformed JSON - {e}")
+    sys.exit(1)
+except Exception as e:
+    print(f"❌ Failed to load {SUFFIX_FILE}: {e}")
+    sys.exit(1)
+
 # Reverse mapping: ticker -> ISIN
 TICKER_TO_ISIN = {v: k for k, v in ISIN_TO_TICKER.items()}
 
@@ -45,25 +71,45 @@ TICKER_TO_ISIN = {v: k for k, v in ISIN_TO_TICKER.items()}
 PROBLEM_SUFFIXES = {'.L', '.XC'}
 REMAPPED_SYMBOLS = {'VEVEL.XC', 'VWRLL.XC'}
 
-def should_replace(ticker: str, isin: str) -> bool:
-    """Check if this ticker should be replaced with ISIN."""
-    if not isin or not ticker:
-        return False
+def fetch_yahoo_ticker(isin: str) -> str:
+    """Query Yahoo Finance Search API for the ISIN."""
+    url = f"https://query2.finance.yahoo.com/v1/finance/search?q={isin}"
+    req = urllib.request.Request(
+        url, 
+        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    )
+    try:
+        # timeout=10 prevents indefinite blocking on network stalls
+        with urllib.request.urlopen(req, timeout=10) as response:
+            data = json.loads(response.read().decode())
+            quotes = data.get("quotes", [])
+            if quotes:
+                return quotes[0].get("symbol")
+    except socket.timeout:
+        logging.error(f"Timeout (10s) fetching ISIN {isin} from {url}")
+    except urllib.error.HTTPError as e:
+        logging.exception(f"HTTPError fetching ISIN {isin} from {url}. Status: {e.code}, Reason: {e.reason}")
+    except urllib.error.URLError as e:
+        logging.error(f"URLError fetching ISIN {isin} from {url}: {e.reason}")
+    except json.JSONDecodeError as e:
+        logging.exception(f"JSONDecodeError parsing response for ISIN {isin} from {url}")
+    except Exception as e:
+        logging.exception(f"Unexpected error fetching ISIN {isin} from {url}")
+    return None
 
-    # Replace if has problematic suffix or is remapped
-    if any(ticker.endswith(s) for s in PROBLEM_SUFFIXES):
-        return True
-    if ticker in REMAPPED_SYMBOLS:
-        return True
-
-    # Replace if ISIN exists and ticker doesn't (ie: VEVE without .L should use ISIN)
-    if isin in ISIN_TO_TICKER and ticker == ISIN_TO_TICKER[isin]:
-        return True
-
-    return False
-
-def process_csv(input_file: str, output_file: str):
-    """Process CSV: replace problematic tickers with ISINs."""
+def process_csv(input_file: str, output_file: str) -> tuple[int, bool]:
+    """
+    Map tickers in a Trading212 export CSV to Yahoo Finance symbols and write the transformed rows to the specified output CSV.
+    
+    Processes each row in input_file: if an ISIN is present and mapped in `ISIN_TO_TICKER`, replaces the `Ticker` with the mapped symbol; otherwise, when the ticker lacks a dot, appends an exchange suffix based on the row currency (e.g., GBP→.L, CHF→.SW, CAD→.TO, AUD→.AX, JPY→.T). EUR is intentionally left unsuffixed. Rows with an empty `Ticker` are written unchanged.
+    
+    Parameters:
+        input_file (str): Path to the input CSV file to read.
+        output_file (str): Path where the transformed CSV will be written.
+    
+    Returns:
+        tuple[int, bool]: A tuple containing the number of modified tickers and a boolean indicating if new mappings were fetched.
+    """
     with open(input_file, 'r', encoding='utf-8') as infile:
         reader = csv.DictReader(infile)
 
@@ -71,19 +117,49 @@ def process_csv(input_file: str, output_file: str):
             raise ValueError("Empty CSV file")
 
         replaced_count = 0
+        mappings_changed = False
         rows_to_write = []
 
         for row in reader:
             ticker = row.get('Ticker', '').strip()
             isin = row.get('ISIN', '').strip()
+            currency = row.get('Currency (Price / share)', row.get('Currency', '')).strip()
 
-            if should_replace(ticker, isin):
-                if isin:
-                    old_ticker = ticker
-                    # Replace ticker with ISIN in format: ISIN_<CODE>
-                    row['Ticker'] = f"ISIN_{isin}"
-                    print(f"  ℹ️  {old_ticker:15} → ISIN_{isin}")
+            # 1. Fetch missing ISINs from Yahoo Finance
+            if isin and isin not in ISIN_TO_TICKER:
+                print(f"  🔍 Unmapped ISIN {isin}. Querying Yahoo Finance API...")
+                time.sleep(0.5)  # Be gentle to Yahoo API
+                fetched_ticker = fetch_yahoo_ticker(isin)
+                if fetched_ticker:
+                    print(f"  ✅ Auto-mapped {isin} -> {fetched_ticker}")
+                    ISIN_TO_TICKER[isin] = fetched_ticker
+                    mappings_changed = True
+                else:
+                    print(f"  ❌ Could not auto-resolve {isin}")
+
+            # 2. Explicit Mapping Override (including newly fetched ones)
+            if isin and isin in ISIN_TO_TICKER:
+                new_ticker = ISIN_TO_TICKER[isin]
+                if ticker != new_ticker:
+                    row['Ticker'] = new_ticker
+                    old_display = ticker if ticker else "<BLANK>"
+                    print(f"  ℹ️  {old_display:15} → {new_ticker:15} (Explicit Map)")
                     replaced_count += 1
+                    ticker = new_ticker
+
+            if not ticker:
+                rows_to_write.append(row)
+                continue
+
+            # 3. Dynamic Auto-Suffix logic for unmapped stocks
+            if not (isin and isin in ISIN_TO_TICKER):
+                suffix = CURRENCY_SUFFIXES.get(currency)
+                if suffix and '.' not in ticker and currency != 'EUR':
+                    new_ticker = f"{ticker}{suffix}"
+                    row['Ticker'] = new_ticker
+                    print(f"  ℹ️  {ticker:15} → {new_ticker:15} (Auto-Suffix {suffix})")
+                    replaced_count += 1
+
 
             rows_to_write.append(row)
 
@@ -93,7 +169,7 @@ def process_csv(input_file: str, output_file: str):
             for row in rows_to_write:
                 writer.writerow(row)
 
-    return replaced_count
+    return replaced_count, mappings_changed
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
@@ -108,8 +184,15 @@ if __name__ == "__main__":
         sys.exit(1)
 
     try:
-        count = process_csv(input_file, output_file)
-        print(f"✅ Preprocessed CSV: {count} tickers replaced with ISINs")
+        count, changed = process_csv(input_file, output_file)
+        if changed and MAPPING_FILE:
+            sorted_mappings = dict(sorted(ISIN_TO_TICKER.items()))
+            with open(MAPPING_FILE, "w") as f:
+                json.dump(sorted_mappings, f, indent=2)
+                f.write("\n")
+            print("  💾 Saved new mappings to isin-mapping.json")
+            
+        print(f"✅ Preprocessed CSV: {count} tickers mapped to Yahoo Finance symbols")
         print(f"   Output: {output_file}")
     except Exception as e:
         print(f"❌ Error: {e}")
