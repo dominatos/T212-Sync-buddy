@@ -32,3 +32,4 @@ investbrain-arch/app/Models/Transaction.php
 investbrain-arch/github_issue.md
 investbrain-arch/command_responses_log.md
 restricted
+.coderabbit copy.yaml
