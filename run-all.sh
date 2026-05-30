@@ -361,7 +361,7 @@ process_account() {
       log_trace "  INVESTBRAIN_URL: $INVESTBRAIN_URL"
       log_trace "  INVESTBRAIN_API_TOKEN: ***"
       log_trace "  Current working directory: $(pwd)"
-      log_trace "  Files in current dir: $(ls -la investbrain_import.py | head -1)"
+      log_trace "  Files in current dir: $(stat -c '%A %s %n' investbrain_import.py 2>/dev/null || echo 'investbrain_import.py not found')"
 
       if [[ "$validate_only" == "true" ]]; then
         log_info "🔍 Validating CSV for Investbrain import..."
