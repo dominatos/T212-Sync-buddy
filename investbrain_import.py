@@ -582,8 +582,8 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                             
                             # Autodetection hints for common validation errors
                             if response.status_code == 422:
+                                sym = transaction.get('symbol', '')
                                 if "symbol provided" in response.text:
-                                    sym = transaction.get('symbol', '')
                                     curr = transaction.get('currency', '')
                                     fallback_suffix = CURRENCY_SUFFIXES.get(curr)
                                     

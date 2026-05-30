@@ -637,6 +637,24 @@ class TestTransactionPostRetry(unittest.TestCase):
         finally:
             os.unlink(csv_path)
 
+    @patch("investbrain_import.time.sleep")
+    @patch("investbrain_import.requests.post")
+    @patch("investbrain_import.fetch_existing_fingerprints", return_value=Counter())
+    def test_post_422_quantity_error_does_not_crash(self, mock_fetch, mock_post, mock_sleep):
+        """Verifies that a 422 error containing 'quantity must not be greater' does not raise UnboundLocalError."""
+        resp = _mock_response(422)
+        resp.text = '{"message":"quantity must not be greater than..."}'
+        mock_post.return_value = resp
+        csv_path = _create_test_csv()
+        try:
+            success, errors, non_trade_skipped, dedup_skipped = investbrain_import.import_to_investbrain(
+                csv_path, PORTFOLIO, API_URL, "test-token"
+            )
+            self.assertEqual(success, 0)
+            self.assertEqual(errors, 1)
+        finally:
+            os.unlink(csv_path)
+
 
 # =============================================================================
 # 4. CSV Parsing Validation
