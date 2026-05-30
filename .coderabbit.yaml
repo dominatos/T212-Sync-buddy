@@ -44,7 +44,7 @@ reviews:
         - Main dependencies are `requests` and `python-dotenv`. Consult the project owner before introducing new external libraries.
         - Ensure API rate-limiting is handled gracefully with retry caps.
         - State persistence must strictly be transactional (written only on confirmed success).
-        - Ensure unit tests using `unittest` and `unittest.mock` exist in `tests/test_t212_fetch.py`.
+        - Ensure unit tests using `unittest` and `unittest.mock` exist in `tests/test_t212_fetch.py` and `tests/test_investbrain_import.py`.
 
 chat:
   auto_reply: true

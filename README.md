@@ -205,6 +205,7 @@ INVESTBRAIN_VALIDATE=true       # Validate CSV before importing to Investbrain
 INVESTBRAIN_IMPORT=true         # Automatically import transactions to Investbrain
 INVESTBRAIN_SAME_DAY_DELAY_SECONDS=2 # Delay between intraday trades to prevent 422 errors
 INVESTBRAIN_AUTO_REFRESH=true   # Automatically trigger Investbrain server-side data refreshes
+INVESTBRAIN_CONTAINER=investbrain-app # Docker container name for Investbrain
 
 # --- Yahoo Rate Limit Handling ---
 # t212_fetch.py checks Yahoo only when there are no Investbrain accounts configured.
