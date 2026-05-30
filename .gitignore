@@ -5,12 +5,12 @@ post.md
 tests/temp/differenace-in-balance.md
 
 
-log
-prompt.txt
-*__pycache__*
+/log/
+/prompt.txt
+**/__pycache__/
 
-logs.txt
-history.txt
+/logs.txt
+/history.txt
 .codex
 issue.md
 testinvestbrain-issue/
@@ -24,7 +24,7 @@ review.md
 testing-command.sh
 logs-1st-run.txt
 testing-command-copy.sh
-investbrain-arch
+/investbrain-arch/
 restricted
 .coderabbit copy.yaml
-tests/__pycache__/*
+tests/__pycache__/
