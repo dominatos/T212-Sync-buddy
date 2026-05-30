@@ -5,7 +5,7 @@ tofix.md
 .env
 post.md
 tests/temp/differenace-in-balance.md
-.gitignore
+
 
 /log
 /prompt.txt
@@ -27,8 +27,6 @@ __pycache__/
 /logs-1st-run.txt
 /testing-command-copy.sh
 investbrain-arch/app/Models/Transaction.php
-.gitignore
-.gitignore
 investbrain-arch/github_issue.md
 investbrain-arch/command_responses_log.md
 restricted
