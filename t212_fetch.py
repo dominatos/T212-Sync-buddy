@@ -882,7 +882,7 @@ def main():
 
     # Execute run-all.sh with _data_dir as cwd to ensure it finds the correct directories.
     # Do NOT use check=True — we inspect per-account results even on partial failure.
-    run_result = subprocess.run(["bash", str(script_path)], cwd=str(_data_dir))
+    run_result = subprocess.run(["bash", str(script_path)], cwd=str(_data_dir), check=False)
 
     # Determine per-account success AFTER run-all.sh completes (never mid-pipeline).
     # An account succeeded only if its specific CSV is not in input/, quarantine/, or unverified/
