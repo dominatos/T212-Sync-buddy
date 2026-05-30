@@ -541,9 +541,8 @@ def get_earliest_year(headers: dict) -> int:
     if oldest_date:
         info(f"Overall earliest activity: {oldest_date.strftime('%Y-%m-%d')}")
         return oldest_date.year
-    else:
-        warn("No activity found, defaulting to current year")
-        return datetime.now(timezone.utc).year
+    warn("No activity found, defaulting to current year")
+    return datetime.now(timezone.utc).year
 
 
 def request_export(headers: dict, time_from: datetime, time_to: datetime) -> int:
