@@ -42,7 +42,7 @@ log_fatal() { echo "[FATAL] $*"; }
 # countdown_sleep pauses execution for the given number of seconds and, when the log level is TRACE, prints a per-second "Sleeping Ns..." countdown to stdout.
 countdown_sleep() {
     local seconds=$1
-    while [ $seconds -gt 0 ]; do
+    while [ "$seconds" -gt 0 ]; do
         [[ $_CURRENT_LEVEL -le 0 ]] && echo -ne "\rSleeping ${seconds}s... "
         sleep 1
         seconds=$((seconds - 1))
