@@ -31,3 +31,4 @@ investbrain-arch/app/Models/Transaction.php
 .gitignore
 investbrain-arch/github_issue.md
 investbrain-arch/command_responses_log.md
+restricted

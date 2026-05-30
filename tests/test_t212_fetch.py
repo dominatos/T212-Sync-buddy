@@ -690,6 +690,150 @@ class TestPageEarliest(unittest.TestCase):
         self.assertIsNotNone(result.tzinfo)
         self.assertEqual(result.year, 2024)
 
+    @patch("t212_fetch.time.sleep")
+    @patch("t212_fetch.safe_get")
+    def test_bare_query_params_pagination(self, mock_get, mock_sleep):
+        """Handles nextPagePath without leading '/' (transactions endpoint bug).
+
+        Reproduces the exact scenario from GitHub Issue #3 where the
+        transactions endpoint returns bare query params as nextPagePath,
+        causing a malformed URL. After the fix, _page_earliest must
+        construct a valid URL and continue pagination successfully.
+        """
+        page1 = MagicMock()
+        page1.json.return_value = {
+            "items": [{"date": "2026-05-13T10:00:00+00:00"}],
+            "nextPagePath": "limit=50&cursor=019e20ee-6e1e-7778-b27c-f29d47195e17&time=2026-05-13T10:42:37.211Z",
+        }
+        page1.headers = {"x-ratelimit-remaining": "10"}
+        page2 = MagicMock()
+        page2.json.return_value = {
+            "items": [{"date": "2025-01-15T08:00:00+00:00"}]
+        }
+        page2.headers = {}
+        mock_get.side_effect = [page1, page2]
+
+        result = t212_fetch._page_earliest(
+            {},
+            "https://live.trading212.com/api/v0/equity/history/transactions?limit=50",
+            lambda x: x.get("date"),
+        )
+        # Should find the oldest date from page 2
+        self.assertEqual(result.year, 2025)
+        # Verify the second call used a properly constructed URL
+        second_call_url = mock_get.call_args_list[1][0][0]
+        self.assertTrue(
+            second_call_url.startswith("https://live.trading212.com/api/v0/equity/history/transactions?"),
+            f"Expected valid transaction URL, got: {second_call_url}",
+        )
+
+
+# =============================================================================
+# 10a. resolve_next_page_url
+# =============================================================================
+class TestResolveNextPageUrl(unittest.TestCase):
+    """Tests for resolve_next_page_url()"""
+
+    def test_full_relative_path(self):
+        """Full relative path (starts with '/') is prepended with host only.
+
+        Orders and dividends endpoints return nextPagePath as a complete
+        relative path. The helper must construct the URL by simple concatenation.
+        """
+        result = t212_fetch.resolve_next_page_url(
+            "https://live.trading212.com",
+            "https://live.trading212.com/api/v0/equity/history/orders?limit=50",
+            "/api/v0/equity/history/orders?cursor=123&limit=50",
+        )
+        self.assertEqual(
+            result,
+            "https://live.trading212.com/api/v0/equity/history/orders?cursor=123&limit=50",
+        )
+
+    def test_bare_query_params(self):
+        """Bare query params (no leading '/') reconstructs path from start_url.
+
+        Transactions endpoint returns nextPagePath as bare query parameters.
+        The helper must extract the path from start_url and append the params.
+
+        This is the exact bug scenario from GitHub Issue #3.
+        """
+        result = t212_fetch.resolve_next_page_url(
+            "https://live.trading212.com",
+            "https://live.trading212.com/api/v0/equity/history/transactions?limit=50",
+            "limit=50&cursor=019e20ee-6e1e-7778-b27c-f29d47195e17&time=2026-05-13T10:42:37.211Z",
+        )
+        self.assertEqual(
+            result,
+            "https://live.trading212.com/api/v0/equity/history/transactions?limit=50&cursor=019e20ee-6e1e-7778-b27c-f29d47195e17&time=2026-05-13T10:42:37.211Z",
+        )
+
+    def test_demo_host(self):
+        """Works correctly with demo Trading212 host.
+
+        When T212_DEMO=true, BASE_HOST is 'https://demo.trading212.com'.
+        The helper must use the demo host correctly.
+        """
+        result = t212_fetch.resolve_next_page_url(
+            "https://demo.trading212.com",
+            "https://demo.trading212.com/api/v0/equity/history/dividends?limit=50",
+            "/api/v0/equity/history/dividends?limit=50&cursor=999",
+        )
+        self.assertEqual(
+            result,
+            "https://demo.trading212.com/api/v0/equity/history/dividends?limit=50&cursor=999",
+        )
+
+    def test_validation_catches_missing_scheme(self):
+        """Raises ValueError when constructed URL lacks a scheme.
+
+        Ensures the validation guard catches malformed URLs before they
+        reach safe_get(), providing a clear error message for debugging.
+        """
+        with self.assertRaises(ValueError) as ctx:
+            t212_fetch.resolve_next_page_url(
+                "",  # empty host — no scheme
+                "https://live.trading212.com/api/v0/test",
+                "/api/v0/test?cursor=abc",
+            )
+        self.assertIn("malformed", str(ctx.exception).lower())
+
+    def test_validation_catches_missing_netloc(self):
+        """Raises ValueError when constructed URL lacks a network location.
+
+        Prevents requests to URLs like 'https:///path?params' which would
+        fail with confusing connection errors instead of a clear message.
+        """
+        with self.assertRaises(ValueError) as ctx:
+            t212_fetch.resolve_next_page_url(
+                "https://",  # scheme but no host
+                "https://live.trading212.com/api/v0/test",
+                "/api/v0/test?cursor=abc",
+            )
+        self.assertIn("malformed", str(ctx.exception).lower())
+
+    def test_bare_params_exact_issue_url(self):
+        """Reproduces the exact malformed URL from GitHub Issue #3 logs.
+
+        Input: nextPagePath = 'limit=50&cursor=019e20ee-...'
+        Without fix: 'https://live.trading212.comlimit=50&cursor=...'
+        With fix:    'https://live.trading212.com/api/v0/equity/history/transactions?limit=50&cursor=...'
+        """
+        next_page = "limit=50&cursor=019e20ee-6e1e-7778-b27c-f29d47195e17&time=2026-05-13T10:42:37.211Z"
+        result = t212_fetch.resolve_next_page_url(
+            "https://live.trading212.com",
+            "https://live.trading212.com/api/v0/equity/history/transactions?limit=50",
+            next_page,
+        )
+        # Must NOT produce the broken URL from the issue
+        self.assertNotEqual(
+            result,
+            f"https://live.trading212.com{next_page}",
+        )
+        # Must produce the correct URL
+        self.assertTrue(result.startswith("https://live.trading212.com/api/v0/equity/history/transactions?"))
+        self.assertIn("cursor=019e20ee-6e1e-7778-b27c-f29d47195e17", result)
+
 
 # =============================================================================
 # 11. get_earliest_year

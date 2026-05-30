@@ -24,6 +24,7 @@ import csv
 import io
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
+from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 # --- LOG LEVEL ---
@@ -419,6 +420,51 @@ def safe_post(url: str, headers: dict, json_body: dict, max_retries: int = MAX_4
         return resp
 
 
+def resolve_next_page_url(base_host: str, start_url: str, next_page_path: str) -> str:
+    """
+    Construct a full pagination URL from Trading212's nextPagePath value.
+
+    The Trading212 API returns inconsistent nextPagePath formats across endpoints:
+    - Orders/Dividends: full relative path starting with '/'
+      e.g. '/api/v0/equity/history/orders?cursor=123&limit=50'
+    - Transactions: bare query parameters without leading path
+      e.g. 'limit=50&cursor=019e20ee-...&time=2026-05-13T10:42:37.211Z'
+
+    This helper normalizes both formats into a valid absolute URL.
+
+    Parameters:
+        base_host (str): The API host (e.g. 'https://live.trading212.com').
+        start_url (str): The original full URL used for the first page request.
+            Used to extract the path component when nextPagePath lacks one.
+        next_page_path (str): The raw nextPagePath value from the API response.
+
+    Returns:
+        str: A fully-qualified URL for the next page request.
+
+    Raises:
+        ValueError: If the constructed URL is missing a scheme or netloc,
+            indicating a malformed result that would fail at request time.
+    """
+    if next_page_path.startswith("/"):
+        # Full relative path (e.g. orders, dividends) — just prepend the host
+        url = f"{base_host}{next_page_path}"
+    else:
+        # Bare query params (e.g. transactions) — extract path from start_url
+        # and reconstruct the full URL with the original API path
+        parsed_start = urlparse(start_url)
+        url = f"{base_host}{parsed_start.path}?{next_page_path}"
+
+    # Validate the constructed URL has the minimum required components
+    parsed_result = urlparse(url)
+    if not parsed_result.scheme or not parsed_result.netloc:
+        raise ValueError(
+            f"Constructed pagination URL is malformed (missing scheme or host): {url}"
+        )
+
+    trace(f"Resolved next page URL: {url}")
+    return url
+
+
 def _page_earliest(headers: dict, start_url: str, extract_date) -> datetime | None:
     """
     Finds the earliest (oldest) datetime present across all paginated items from a Trading212 endpoint.
@@ -450,7 +496,7 @@ def _page_earliest(headers: dict, start_url: str, extract_date) -> datetime | No
 
         next_page = data.get("nextPagePath")  # relative path for cursor-based pagination
         if next_page:
-            next_url = f"{BASE_HOST}{next_page}"  # reconstruct full URL from relative path
+            next_url = resolve_next_page_url(BASE_HOST, start_url, next_page)
             remaining = safe_parse_remaining(resp.headers.get("x-ratelimit-remaining"))
             if remaining <= 1:  # about to exhaust the rate-limit bucket
                 parsed = safe_parse_reset(resp.headers.get("x-ratelimit-reset"))
