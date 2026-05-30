@@ -40,7 +40,7 @@ if not MAPPING_FILE:
         print(f"   - {p}")
     sys.exit(1)
 
-with open(MAPPING_FILE) as f:
+with open(MAPPING_FILE, encoding="utf-8") as f:
     ISIN_TO_TICKER = json.load(f)
 
 # Load Currency Suffixes
@@ -55,7 +55,7 @@ if not SUFFIX_FILE:
     sys.exit(1)
 
 try:
-    with open(SUFFIX_FILE) as f:
+    with open(SUFFIX_FILE, encoding="utf-8") as f:
         CURRENCY_SUFFIXES = json.load(f)
 except json.JSONDecodeError as e:
     print(f"❌ Error parsing {SUFFIX_FILE}: Malformed JSON - {e}")
@@ -176,24 +176,24 @@ if __name__ == "__main__":
         print(f"Usage: {sys.argv[0]} <input.csv> <output.csv>")
         sys.exit(1)
 
-    input_file = sys.argv[1]
-    output_file = sys.argv[2]
+    in_file = sys.argv[1]
+    out_file = sys.argv[2]
 
-    if not Path(input_file).exists():
-        print(f"❌ Input file not found: {input_file}")
+    if not Path(in_file).exists():
+        print(f"❌ Input file not found: {in_file}")
         sys.exit(1)
 
     try:
-        count, changed = process_csv(input_file, output_file)
+        count, changed = process_csv(in_file, out_file)
         if changed and MAPPING_FILE:
             sorted_mappings = dict(sorted(ISIN_TO_TICKER.items()))
-            with open(MAPPING_FILE, "w") as f:
+            with open(MAPPING_FILE, "w", encoding="utf-8") as f:
                 json.dump(sorted_mappings, f, indent=2)
                 f.write("\n")
             print("  💾 Saved new mappings to isin-mapping.json")
             
         print(f"✅ Preprocessed CSV: {count} tickers mapped to Yahoo Finance symbols")
-        print(f"   Output: {output_file}")
+        print(f"   Output: {out_file}")
     except Exception as e:
         print(f"❌ Error: {e}")
         sys.exit(1)
