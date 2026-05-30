@@ -9,11 +9,10 @@ reviews:
     enabled: true
     base_branches:
       - ".*"
-
-  ignore_title_keywords:
-    - "wip"
-    - "draft"
-    - "experimental"
+    ignore_title_keywords:
+      - "wip"
+      - "draft"
+      - "experimental"
 
   instructions: |
     - You are acting as a Senior Engineer reviewing this repository.
