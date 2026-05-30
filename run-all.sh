@@ -398,6 +398,16 @@ process_account() {
         investbrain_any_success=1
       fi
 
+      # Dry-run guard: if import was not actually executed, do NOT write a success
+      # marker or archive the CSV. The source file must remain in input/ so that the
+      # next real run (with INVESTBRAIN_IMPORT=true) still picks it up, and
+      # t212_fetch.py will not persist last_fetch for an unimported CSV.
+      if [[ "$import_flag" != "true" ]]; then
+        log_warn "⚠️  Import was skipped (INVESTBRAIN_IMPORT=$import_flag). CSV will NOT be archived; run again with INVESTBRAIN_IMPORT=true to complete the import."
+        rm -f "temp/$csv_name"
+        continue
+      fi
+
       # Create a simple success marker for Investbrain (no JSON files)
       mkdir -p "out/${prefix}"
       echo "{\"platform\": \"investbrain\", \"account_id\": \"$account_id\", \"csv\": \"$csv_name\", \"timestamp\": \"$(date -Iseconds)\"}" > "out/${prefix}/${prefix}-${csv_base}.json"
