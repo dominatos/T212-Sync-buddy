@@ -20,6 +20,7 @@ import sys
 import json
 import time
 import traceback
+from collections import Counter
 from typing import Optional
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
@@ -297,12 +298,12 @@ def parse_csv_row(row: dict) -> Optional[dict]:
     return transaction
 
 def fetch_existing_fingerprints(portfolio_id: str, api_url: str, headers: dict,
-                                  max_retries: int = 3, backoff_base: float = 2.0) -> set:
+                                  max_retries: int = 3, backoff_base: float = 2.0) -> Counter:
     """
     Fetch existing Investbrain transactions for a portfolio and return deduplication fingerprints.
     
-    Retrieves all pages of transactions from the Investbrain `/api/transaction` endpoint and builds a set of tuples
-    (symbol, transaction_type, date (YYYY-MM-DD), rounded_quantity (4 decimals)).
+    Retrieves all pages of transactions from the Investbrain `/api/transaction` endpoint and builds a Counter of
+    tuples (symbol, transaction_type, date (YYYY-MM-DD), rounded_quantity (4 decimals)).
     Price is excluded from the fingerprint because Investbrain may auto-convert currencies (modifying the stored price).
     Retries transient failures (HTTP 429, 5xx, and network errors) up to `max_retries` using exponential backoff
     (backoff_base * 2**attempt). Permanent 4xx (other than 429) errors abort immediately.
@@ -315,12 +316,12 @@ def fetch_existing_fingerprints(portfolio_id: str, api_url: str, headers: dict,
         backoff_base (float): Base backoff seconds multiplied by 2**attempt for retries (default 2.0).
     
     Returns:
-        set: A set of tuples (symbol, transaction_type, date, quantity) used for deduplication.
+        Counter: A multiset of tuples (symbol, transaction_type, date, quantity) used for deduplication.
     
     Raises:
         RuntimeError: On permanent client errors or if transient retries are exhausted while fetching pages.
     """
-    fingerprints = set()
+    fingerprints = Counter()
     page = 1
     info("🔍 Fetching existing Investbrain transactions for deduplication...")
     
@@ -387,7 +388,7 @@ def fetch_existing_fingerprints(portfolio_id: str, api_url: str, headers: dict,
             # To ensure reliable deduplication against CSV data, we exclude price and round qty to 4 decimal places.
             qty_fingerprint = round(float(tx.get('quantity') or 0), 4)
             
-            fingerprints.add((symbol, tx_type, date, qty_fingerprint))
+            fingerprints[(symbol, tx_type, date, qty_fingerprint)] += 1
             
         meta = data.get('meta', {})
         # Stop if we've reached the last page or next link is null
@@ -395,7 +396,7 @@ def fetch_existing_fingerprints(portfolio_id: str, api_url: str, headers: dict,
             break
         page += 1
             
-    debug(f"Found {len(fingerprints)} existing transactions for deduplication.")
+    debug(f"Found {sum(fingerprints.values())} existing transactions for deduplication.")
     return fingerprints
 
 def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_token: str, validate_only: bool = False) -> tuple[int, int, int, int]:
@@ -432,10 +433,10 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
     non_trade_skipped_count = 0
     dedup_skipped_count = 0
 
-    existing_fingerprints = set()
+    existing_fingerprints = Counter()
     if not validate_only:
         try:
-            existing_fingerprints = fetch_existing_fingerprints(portfolio_id, api_url, headers)
+            existing_fingerprints = Counter(fetch_existing_fingerprints(portfolio_id, api_url, headers))
         except RuntimeError as e:
             # Deduplication must succeed fully or fail deterministically.
             # Proceeding without complete fingerprints risks creating duplicate transactions.
@@ -512,8 +513,9 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                 qty_fingerprint = round(float(transaction.get('quantity', 0)), 4)
                 fingerprint = (symbol, tx_type, date, qty_fingerprint)
                 
-                if not validate_only and fingerprint in existing_fingerprints:
+                if not validate_only and existing_fingerprints.get(fingerprint, 0) > 0:
                     info(f"⏭️ Skipping duplicate: {symbol} {tx_type} {transaction.get('quantity')} on {date}")
+                    existing_fingerprints[fingerprint] -= 1
                     dedup_skipped_count += 1
                     continue
 
@@ -563,7 +565,6 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                                  f"{transaction.get('cost_basis', transaction.get('sale_price'))} "
                                  f"{transaction['currency']}")
                             success_count += 1
-                            existing_fingerprints.add(fingerprint)
                             post_handled = True
                             break
                         elif response.status_code == 429 or response.status_code >= 500:
@@ -590,10 +591,9 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                                     if fallback_suffix and fallback_suffix not in sym and post_attempt < max_post_retries:
                                         warn(f"💡 AUTODETECT: Symbol '{sym}' invalid. Automatically retrying with '{sym}{fallback_suffix}' fallback...")
                                         transaction['symbol'] = f"{sym}{fallback_suffix}"
-                                        # Recompute fingerprint using the updated symbol so that if the retry
-                                        # succeeds, existing_fingerprints.add(fingerprint) (line ~566) stores
-                                        # the corrected symbol (e.g. "DHER.DE") rather than the stale original
-                                        # ("DHER"). Uses the same 4-field formula as the initial build above.
+                                        # Recompute fingerprint using the updated symbol so any later duplicate
+                                        # check in this row uses the corrected symbol (e.g. "DHER.DE") rather than
+                                        # the stale original ("DHER"). Uses the same 4-field formula as above.
                                         fingerprint = (transaction['symbol'], tx_type, date, qty_fingerprint)
                                         continue  # Retry with the modified symbol
                                         
