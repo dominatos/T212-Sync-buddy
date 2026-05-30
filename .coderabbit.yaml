@@ -1,3 +1,4 @@
+```yaml
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
 
 language: "en-US"
@@ -37,21 +38,14 @@ reviews:
         - Verification Contract: `run-all.sh` must cross-verify Ghostfolio CSV conversions against JSON and trust `investbrain_import.py` for success/failure.
         - Ensure tests exist in `tests/test_run_all.bats` for new logic.
 
+    - path: "**/*.py"
+      instructions: |
+        - Python 3.10+ compatibility is required (use type hints and modern syntax).
+        - Main dependencies are `requests` and `python-dotenv`. Consult the project owner before introducing new external libraries.
+        - Ensure API rate-limiting is handled gracefully with retry caps.
+        - State persistence must strictly be transactional (written only on confirmed success).
+        - Ensure unit tests using `unittest` and `unittest.mock` exist in `tests/test_t212_fetch.py` and `tests/test_investbrain_import.py`.
+
 chat:
   auto_reply: true
-
-path_instructions:
-  - path: "**/*.sh"
-    instructions: |
-      - Bash 4.0+ compliant (`set -e -o pipefail`, associative arrays, `mapfile`).
-      - Use explicit paths or environment variables.
-      - Ensure ShellCheck clean where possible.
-      - Ensure tests exist in `tests/test_run_all.bats` for new logic.
-
-  - path: "**/*.py"
-    instructions: |
-      - Python 3.10+ compatibility is required (use type hints and modern syntax).
-      - Main dependencies are `requests` and `python-dotenv`. Consult the project owner before introducing new external libraries.
-      - Ensure API rate-limiting is handled gracefully with retry caps.
-      - State persistence must strictly be transactional (written only on confirmed success).
-      - Ensure unit tests using `unittest` and `unittest.mock` exist in `tests/test_t212_fetch.py`.
+```
