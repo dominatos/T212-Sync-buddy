@@ -1,4 +1,4 @@
-```yaml
+
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
 
 language: "en-US"
@@ -48,4 +48,3 @@ reviews:
 
 chat:
   auto_reply: true
-```
