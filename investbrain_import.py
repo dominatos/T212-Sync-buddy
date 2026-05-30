@@ -595,6 +595,12 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                                         # check in this row uses the corrected symbol (e.g. "DHER.DE") rather than
                                         # the stale original ("DHER"). Uses the same 4-field formula as above.
                                         fingerprint = (transaction['symbol'], tx_type, date, qty_fingerprint)
+                                        if existing_fingerprints.get(fingerprint, 0) > 0:
+                                            info(f"⏭️ Skipping duplicate: {transaction['symbol']} {tx_type} {transaction.get('quantity')} on {date}")
+                                            existing_fingerprints[fingerprint] -= 1
+                                            dedup_skipped_count += 1
+                                            post_handled = True
+                                            break
                                         continue  # Retry with the modified symbol
                                         
                                     error(f"Failed to import row {row_num}: HTTP {response.status_code} - {response.text}")
