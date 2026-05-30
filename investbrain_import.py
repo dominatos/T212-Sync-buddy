@@ -217,7 +217,7 @@ def parse_csv_row(row: dict) -> Optional[dict]:
     # Extract required fields
     time_str = row.get('Time', '').strip()
     if not time_str:
-        return None
+        raise ValueError(f"Missing Time field for trade row: {row}")
 
     # Parse date - Trading212 format is typically YYYY-MM-DD HH:MM:SS
     try:

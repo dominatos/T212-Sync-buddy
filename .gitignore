@@ -28,3 +28,6 @@ testing-command-copy.sh
 restricted
 .coderabbit copy.yaml
 tests/__pycache__/
+
+# AI Code Review temporary files
+.ai-code-review/

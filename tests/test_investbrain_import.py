@@ -599,5 +599,33 @@ class TestTransactionPostRetry(unittest.TestCase):
             os.unlink(csv_path)
 
 
+# =============================================================================
+# 4. CSV Parsing Validation
+# =============================================================================
+class TestCsvParsingValidation(unittest.TestCase):
+    """Tests for CSV parsing validation and error counting."""
+
+    @patch("investbrain_import.fetch_existing_fingerprints", return_value=set())
+    def test_missing_time_increments_error_count(self, mock_fetch):
+        """A recognized trade row missing Time raises ValueError and increments error_count."""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("Action,Time,Ticker,No. of shares,Price / share,Currency (Price / share)\n")
+            # First row valid
+            f.write("Market buy,2025-01-15 10:00:00,AAPL,10,150.00,USD\n")
+            # Second row missing Time
+            f.write("Market sell,,AAPL,5,155.00,USD\n")
+            csv_path = f.name
+
+        try:
+            success, errors, non_trade_skipped, dedup_skipped = investbrain_import.import_to_investbrain(
+                csv_path, PORTFOLIO, API_URL, "test-token", validate_only=True
+            )
+            self.assertEqual(success, 1) # First row succeeds validation
+            self.assertEqual(errors, 1)  # Second row fails validation due to missing Time
+            self.assertEqual(non_trade_skipped, 0)
+            self.assertEqual(dedup_skipped, 0)
+        finally:
+            os.unlink(csv_path)
+
 if __name__ == "__main__":
     unittest.main()
