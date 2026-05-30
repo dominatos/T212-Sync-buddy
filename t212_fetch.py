@@ -17,7 +17,6 @@ import requests
 import base64
 import time
 import os
-import shutil
 import subprocess
 import json
 import csv
