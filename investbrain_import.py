@@ -590,6 +590,7 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                                     if fallback_suffix and fallback_suffix not in sym and curr != 'EUR' and post_attempt < max_post_retries:
                                         warn(f"💡 AUTODETECT: Symbol '{sym}' invalid. Automatically retrying with '{sym}{fallback_suffix}' fallback...")
                                         transaction['symbol'] = f"{sym}{fallback_suffix}"
+                                        prev_symbol = transaction['symbol']
                                         # Recompute fingerprint using the updated symbol so any later duplicate
                                         # check in this row uses the corrected symbol (e.g. "DHER.DE") rather than
                                         # the stale original ("DHER"). Uses the same 4-field formula as above.
