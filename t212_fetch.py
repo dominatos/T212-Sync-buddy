@@ -189,16 +189,16 @@ def load_accounts() -> list[dict]:
             secret_key = f"{prefix}_API_SECRET"     # derive the companion secret var
             prefix_lower = prefix.lower()
             
+            if not os.getenv(secret_key):
+                warn(f"Skipping {prefix}: no API_SECRET found")
+                continue
+
             if prefix_lower in seen_prefixes:        # skip case-insensitive duplicates
                 trace(f"Skipping duplicate prefix: {prefix_lower}")
                 continue
                 
             seen_prefixes.append(prefix_lower)
-            
-            if os.getenv(secret_key):
-                valid_prefixes.append(prefix)
-            else:
-                warn(f"Skipping {prefix}: no API_SECRET found")
+            valid_prefixes.append(prefix)
 
     # 2. Process each valid prefix and build accounts list
     for prefix in valid_prefixes:
