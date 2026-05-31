@@ -201,7 +201,7 @@ if __name__ == "__main__":
             except Exception as e:
                 if temp_path and os.path.exists(temp_path):
                     os.remove(temp_path)
-                raise e
+                raise
             print("  💾 Saved new mappings to isin-mapping.json")
             
         print(f"✅ Preprocessed CSV: {count} tickers mapped to Yahoo Finance symbols")
