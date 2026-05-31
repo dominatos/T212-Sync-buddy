@@ -32,5 +32,5 @@ tests/temp/differenace-in-balance.md
 # AI Code Review temporary files
 /.ai-code-review/
 testit.sh
-.gitignore
+
 testing-command-new.sh
