@@ -1,4 +1,4 @@
-INSTRUCTIONS.md
+/INSTRUCTIONS.md
 tofix.md
 .env
 post.md
@@ -20,14 +20,14 @@ tests/temp/differenace-in-balance.md
 /temp/
 /dump.json
 /helper-temp-scripts/
-review.md
+/review.md
 /testing-command.sh
 /logs-1st-run.txt
 /testing-command-copy.sh
 /investbrain-arch/
-/restricted
+/restricted/
 /.coderabbit copy.yaml
-tests/__pycache__/
+
 
 # AI Code Review temporary files
 /.ai-code-review/
