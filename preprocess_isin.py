@@ -198,11 +198,12 @@ if __name__ == "__main__":
                     f.flush()
                     os.fsync(f.fileno())
                 os.replace(temp_path, MAPPING_FILE)
-            except Exception:
+            except Exception as e:
                 if temp_path and os.path.exists(temp_path):
                     os.remove(temp_path)
-                raise
-            print("  💾 Saved new mappings to isin-mapping.json")
+                print(f"  ⚠️ Warning: Failed to persist new mappings to isin-mapping.json: {e}")
+            else:
+                print("  💾 Saved new mappings to isin-mapping.json")
             
         print(f"✅ Preprocessed CSV: {count} tickers mapped to Yahoo Finance symbols")
         print(f"   Output: {out_file}")
