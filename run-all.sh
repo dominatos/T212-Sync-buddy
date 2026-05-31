@@ -348,6 +348,16 @@ process_account() {
       done
       log_info "✅ Success: ${#json_files[@]} JSON file(s) for $csv_name ($total_count activities imported)"
 
+      # Dry-run guard: if import was not actually executed, do NOT archive the CSV.
+      # The source file must remain in input/ so that the next real run
+      # (with GHOSTFOLIO_IMPORT=true) still picks it up, and t212_fetch.py
+      # will not persist last_fetch for an unimported CSV.
+      if [[ "${GHOSTFOLIO_IMPORT:-true}" != "true" ]]; then
+        log_warn "⚠️  Import was skipped (GHOSTFOLIO_IMPORT=${GHOSTFOLIO_IMPORT:-true}). CSV will NOT be archived; run again with GHOSTFOLIO_IMPORT=true to complete the import."
+        rm -f "temp/$csv_name"
+        continue
+      fi
+
     elif [[ "$platform" == "investbrain" ]]; then
       # Investbrain import using Python script
       validate_only="${INVESTBRAIN_VALIDATE:-true}"

@@ -193,6 +193,42 @@ class TestFetchExistingFingerprintsRetry(unittest.TestCase):
         mock_sleep.assert_called_once_with(2.0)
 
     @patch("investbrain_import.requests.get")
+    def test_pagination_without_meta_key(self, mock_get):
+        """Fetches multiple pages when 'meta' key is missing but 'links.next' exists.
+
+        Verifies that pagination correctly falls back to checking 'links.next'
+        when the 'meta' object is absent or lacks 'current_page'/'last_page',
+        preventing premature truncation of results.
+        """
+        tx1 = _tx("AAPL", "BUY", "2025-01-01", 10.0, 150.0)
+        tx2 = _tx("GOOG", "BUY", "2025-01-02", 5.0, 2000.0)
+
+        # Page 1: has data and next link, but no meta
+        page1 = {
+            "data": [tx1],
+            "links": {"next": "http://example.com/next"}
+        }
+        # Page 2: has data and no next link, no meta
+        page2 = {
+            "data": [tx2],
+            "links": {"next": None}
+        }
+
+        mock_get.side_effect = [
+            _mock_response(200, page1),
+            _mock_response(200, page2),
+        ]
+
+        result = investbrain_import.fetch_existing_fingerprints(
+            PORTFOLIO, API_URL, HEADERS
+        )
+
+        self.assertEqual(len(result), 2)
+        self.assertIn(("AAPL", "BUY", "2025-01-01", 10.0), result)
+        self.assertIn(("GOOG", "BUY", "2025-01-02", 5.0), result)
+        self.assertEqual(mock_get.call_count, 2)
+
+    @patch("investbrain_import.requests.get")
     def test_permanent_4xx_raises_immediately(self, mock_get):
         """Raises RuntimeError immediately on permanent 4xx (non-429) error.
 

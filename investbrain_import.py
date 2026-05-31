@@ -249,6 +249,13 @@ def parse_csv_row(row: dict) -> Optional[dict]:
     if not symbol:
         raise ValueError(f"No symbol found for row: {row}")
 
+    # Explicit ISIN mapping (e.g. DHER -> DHER.DE)
+    if isin and isin in ISIN_MAPPING:
+        mapped_sym = ISIN_MAPPING[isin]
+        if mapped_sym != symbol:
+            trace(f"Mapped {symbol} to {mapped_sym} based on ISIN {isin} during parsing")
+            symbol = mapped_sym
+
     # Quantity
     quantity_str = row.get('No. of shares', '').strip()
     try:
@@ -495,15 +502,7 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
             prev_date = None
 
             for row_num, transaction in enumerate(transactions, 1):
-                # 3. Explicit ISIN mapping (e.g. DHER -> DHER.DE)
-                isin = transaction.get('isin')
-                if isin and isin in ISIN_MAPPING:
-                    mapped_sym = ISIN_MAPPING[isin]
-                    if mapped_sym != transaction['symbol']:
-                        info(f"Mapped {transaction['symbol']} to {mapped_sym} based on ISIN {isin}")
-                        transaction['symbol'] = mapped_sym
-
-                # 4. Deduplication Check
+                # 3a. Deduplication Check
                 symbol = transaction.get('symbol')
                 tx_type = transaction.get('transaction_type')
                 date = transaction.get('date', '')[:10]
@@ -519,7 +518,7 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                     dedup_skipped_count += 1
                     continue
 
-                # 2. Delay for same-symbol same-day transactions to avoid race conditions
+                # 3b. Delay for same-symbol same-day transactions to avoid race conditions
                 curr_symbol = transaction.get('symbol')
                 curr_date = transaction.get('date', '')[:10]
                 if (not validate_only
@@ -536,7 +535,7 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                     success_count += 1
                     continue
 
-                # Send to Investbrain API — with retry for transient failures
+                # 3c. Send to Investbrain API — with retry for transient failures
                 # Retry policy (consistent with fetch_existing_fingerprints):
                 #   - Transient errors (HTTP 429, 5xx, network exceptions): retry up to
                 #     max_post_retries times with exponential backoff.
