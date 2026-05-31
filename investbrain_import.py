@@ -39,7 +39,7 @@ ISIN_MAPPING = {}
 try:
     for p in [Path("/app/isin-mapping.json"), Path("isin-mapping.json"), Path(__file__).parent / "isin-mapping.json"]:
         if p.exists():
-            with open(p, 'r') as f:
+            with open(p, 'r', encoding='utf-8') as f:
                 ISIN_MAPPING = json.load(f)
             break
 except Exception as e:
@@ -392,7 +392,7 @@ def fetch_existing_fingerprints(portfolio_id: str, api_url: str, headers: dict,
             
         meta = data.get('meta', {})
         # Stop if we've reached the last page or next link is null
-        if meta.get('current_page') == meta.get('last_page') or not data.get('links', {}).get('next'):
+        if not data.get('links', {}).get('next') and (meta.get('last_page') is None or meta.get('current_page') == meta.get('last_page')):
             break
         page += 1
             
@@ -436,7 +436,7 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
     existing_fingerprints = Counter()
     if not validate_only:
         try:
-            existing_fingerprints = Counter(fetch_existing_fingerprints(portfolio_id, api_url, headers))
+            existing_fingerprints = fetch_existing_fingerprints(portfolio_id, api_url, headers)
         except RuntimeError as e:
             # Deduplication must succeed fully or fail deterministically.
             # Proceeding without complete fingerprints risks creating duplicate transactions.
@@ -588,7 +588,7 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                                     fallback_suffix = CURRENCY_SUFFIXES.get(curr)
                                     
                                     # If it failed without a suffix, try appending the currency's default suffix
-                                    if fallback_suffix and fallback_suffix not in sym and post_attempt < max_post_retries:
+                                    if fallback_suffix and fallback_suffix not in sym and curr != 'EUR' and post_attempt < max_post_retries:
                                         warn(f"💡 AUTODETECT: Symbol '{sym}' invalid. Automatically retrying with '{sym}{fallback_suffix}' fallback...")
                                         transaction['symbol'] = f"{sym}{fallback_suffix}"
                                         # Recompute fingerprint using the updated symbol so any later duplicate

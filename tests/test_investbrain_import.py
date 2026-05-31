@@ -448,7 +448,7 @@ class TestImportToInvestbrainDedupFailure(unittest.TestCase):
     def test_shifted_buy_duplicate_skipped(self, mock_post, mock_fetch):
         """Verifies that a BUY shifted to D-1 is skipped if it hits an existing fingerprint."""
         # Pre-seed a fingerprint for AAPL BUY on 2025-01-14
-        mock_fetch.return_value = {("AAPL", "BUY", "2025-01-14", 10.0)}
+        mock_fetch.return_value = Counter({("AAPL", "BUY", "2025-01-14", 10.0): 1})
         mock_post.return_value = _mock_response(201)
 
         with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
@@ -501,7 +501,7 @@ class TestTransactionPostRetry(unittest.TestCase):
 
     @patch("investbrain_import.time.sleep")
     @patch("investbrain_import.requests.post")
-    @patch("investbrain_import.fetch_existing_fingerprints", return_value=set())
+    @patch("investbrain_import.fetch_existing_fingerprints", return_value=Counter())
     def test_post_retry_on_429_then_success(self, mock_fetch, mock_post, mock_sleep):
         """Retries on HTTP 429 with exponential backoff, then succeeds.
 
@@ -529,7 +529,7 @@ class TestTransactionPostRetry(unittest.TestCase):
 
     @patch("investbrain_import.time.sleep")
     @patch("investbrain_import.requests.post")
-    @patch("investbrain_import.fetch_existing_fingerprints", return_value=set())
+    @patch("investbrain_import.fetch_existing_fingerprints", return_value=Counter())
     def test_post_retry_on_500_then_success(self, mock_fetch, mock_post, mock_sleep):
         """Retries on HTTP 500 with exponential backoff, then succeeds.
 
@@ -558,7 +558,7 @@ class TestTransactionPostRetry(unittest.TestCase):
 
     @patch("investbrain_import.time.sleep")
     @patch("investbrain_import.requests.post")
-    @patch("investbrain_import.fetch_existing_fingerprints", return_value=set())
+    @patch("investbrain_import.fetch_existing_fingerprints", return_value=Counter())
     def test_post_retry_on_network_error_then_success(self, mock_fetch, mock_post, mock_sleep):
         """Retries on network exception (ConnectionError), then succeeds.
 
@@ -585,7 +585,7 @@ class TestTransactionPostRetry(unittest.TestCase):
 
     @patch("investbrain_import.time.sleep")
     @patch("investbrain_import.requests.post")
-    @patch("investbrain_import.fetch_existing_fingerprints", return_value=set())
+    @patch("investbrain_import.fetch_existing_fingerprints", return_value=Counter())
     def test_post_permanent_4xx_no_retry(self, mock_fetch, mock_post, mock_sleep):
         """Counts error immediately on permanent 4xx (non-429) — no retry.
 
@@ -613,7 +613,7 @@ class TestTransactionPostRetry(unittest.TestCase):
 
     @patch("investbrain_import.time.sleep")
     @patch("investbrain_import.requests.post")
-    @patch("investbrain_import.fetch_existing_fingerprints", return_value=set())
+    @patch("investbrain_import.fetch_existing_fingerprints", return_value=Counter())
     def test_post_retry_exhaustion_counts_error(self, mock_fetch, mock_post, mock_sleep):
         """Counts error after all POST retries are exhausted.
 
@@ -662,7 +662,7 @@ class TestTransactionPostRetry(unittest.TestCase):
 class TestCsvParsingValidation(unittest.TestCase):
     """Tests for CSV parsing validation and error counting."""
 
-    @patch("investbrain_import.fetch_existing_fingerprints", return_value=set())
+    @patch("investbrain_import.fetch_existing_fingerprints", return_value=Counter())
     def test_missing_time_increments_error_count(self, mock_fetch):
         """A recognized trade row missing Time raises ValueError and increments error_count."""
         with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
