@@ -198,7 +198,7 @@ if __name__ == "__main__":
                     f.flush()
                     os.fsync(f.fileno())
                 os.replace(temp_path, MAPPING_FILE)
-            except Exception as e:
+            except Exception:
                 if temp_path and os.path.exists(temp_path):
                     os.remove(temp_path)
                 raise
