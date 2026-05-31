@@ -18,6 +18,8 @@ import logging
 import urllib.request
 import urllib.error
 import time
+import os
+import tempfile
 from pathlib import Path
 
 # Load ISIN mapping
@@ -187,9 +189,19 @@ if __name__ == "__main__":
         count, changed = process_csv(in_file, out_file)
         if changed and MAPPING_FILE:
             sorted_mappings = dict(sorted(ISIN_TO_TICKER.items()))
-            with open(MAPPING_FILE, "w", encoding="utf-8") as f:
-                json.dump(sorted_mappings, f, indent=2)
-                f.write("\n")
+            temp_path = None
+            try:
+                fd, temp_path = tempfile.mkstemp(dir=MAPPING_FILE.parent, prefix="isin-mapping.tmp.")
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(sorted_mappings, f, indent=2)
+                    f.write("\n")
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(temp_path, MAPPING_FILE)
+            except Exception as e:
+                if temp_path and os.path.exists(temp_path):
+                    os.remove(temp_path)
+                raise e
             print("  💾 Saved new mappings to isin-mapping.json")
             
         print(f"✅ Preprocessed CSV: {count} tickers mapped to Yahoo Finance symbols")

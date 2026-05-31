@@ -31,3 +31,6 @@ tests/__pycache__/
 
 # AI Code Review temporary files
 /.ai-code-review/
+testit.sh
+.gitignore
+testing-command-new.sh
