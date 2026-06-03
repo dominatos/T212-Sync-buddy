@@ -506,8 +506,7 @@ T212_LOG_LEVEL=TRACE python3 t212_fetch.py
 
 ## Acknowledgments
 
-This robust automation and synchronization pipeline is powered by the excellent CSV-to-JSON parsing engine provided by [dickwolff/Export-To-Ghostfolio](https://github.com/dickwolff/Export-To-Ghostfolio). Data extraction via API, orchestration, normalization, and scheduling are maintained within this project.
-
+This project stands on the shoulders of [dickwolff/Export-To-Ghostfolio](https://github.com/dickwolff/Export-To-Ghostfolio), whose CSV-to-JSON engine powers the Ghostfolio conversion layer. Everything else — Trading212 API extraction, multi-account orchestration, data normalization, scheduling, and the complete Investbrain integration pipeline — is developed and maintained here.
 
 
 If you like this project, consider supporting me:
