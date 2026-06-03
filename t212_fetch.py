@@ -509,8 +509,8 @@ def _page_earliest(headers: dict, start_url: str, extract_date) -> datetime | No
                 # Trading 212 API has a known bug where transactions cursor pagination
                 # randomly returns 404 Not Found on subsequent pages despite a valid nextPagePath.
                 # Sources:
-                # - https://community.trading212.com/t/trading-212-api-update/87988/44
-                # - https://community.trading212.com/t/new-equity-trading-api-in-beta-try-it-out-in-practice-mode/61788
+                # - https://community.trading212.com/t/new-equity-trading-api-in-beta-try-it-out-in-practice-mode/61788/210
+                # - https://community.trading212.com/t/trading-212-api-update/87988/130
                 warn(f"Pagination stopped: API returned 404 for {next_url}")
                 warn("This is a known T212 cursor bug. Accepting partial results.")
                 break
