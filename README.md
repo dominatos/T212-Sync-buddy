@@ -47,6 +47,9 @@ Your final directory structure should look like this:
 ├── preprocess_isin.py       # Optional preprocessing for broker tickers before Ghostfolio conversion
 ├── Dockerfile               # Container image for the fetcher workflow
 ├── docker-compose.yml       # Containerized runner with Docker socket passthrough
+├── isin-mapping.json        # Optional: explicit ISIN-to-Ticker symbol overrides for Investbrain
+├── currency-suffixes.json   # Exchange suffix rules for dynamic Yahoo Finance symbol mapping
+├── requirements.txt         # Python runtime dependencies
 ├── tests/                   # Python and BATS test suite
 ├── systemdunits/            # Services and timers for automation
 └── README.md                # This guide
