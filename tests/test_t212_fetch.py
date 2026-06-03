@@ -473,6 +473,25 @@ class TestLoadAccounts(unittest.TestCase):
         prefixes = {a["prefix"] for a in accounts}
         self.assertEqual(prefixes, {"isa", "cfd"})
 
+    def test_multiple_accounts_no_fallback_raises(self):
+        """Raises SystemExit when multiple accounts exist but rely on global fallback.
+        
+        Verifies that unprefixed GHOSTFOLIO_ACCOUNT_ID is not applied to every prefix
+        when multiple API accounts are configured. This prevents generating orphaned CSVs.
+        """
+        env = {
+            "ISA_API_KEY": "key1",
+            "ISA_API_SECRET": "secret1",
+            "CFD_API_KEY": "key2",
+            "CFD_API_SECRET": "secret2",
+            "GHOSTFOLIO_ACCOUNT_ID": "global-gf-id",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            with self.assertRaises(SystemExit) as ctx:
+                t212_fetch.load_accounts()
+            self.assertEqual(ctx.exception.code, 1)
+
+
 
 # =============================================================================
 # 8. safe_get

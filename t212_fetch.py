@@ -17,7 +17,6 @@ import requests
 import base64
 import time
 import os
-import shutil
 import subprocess
 import json
 import csv
@@ -181,40 +180,60 @@ def load_accounts() -> list[dict]:
     missing_platform_ids = []  # Collect prefixes missing both platform account IDs
 
     debug("Scanning environment variables for API credentials...")
+    
+    # 1. Discover all unique prefixes that have both KEY and SECRET
+    valid_prefixes = []
     for key in os.environ:
         if key.endswith("_API_KEY"):
             prefix = key[: -len("_API_KEY")]       # strip suffix → "ISA", "CFD", etc.
             secret_key = f"{prefix}_API_SECRET"     # derive the companion secret var
             prefix_lower = prefix.lower()
-            debug(f"Found API_KEY: {key}, prefix={prefix}, secret_key={secret_key}")
+            
+            if not os.getenv(secret_key):
+                warn(f"Skipping {prefix}: no API_SECRET found")
+                continue
 
             if prefix_lower in seen_prefixes:        # skip case-insensitive duplicates
                 trace(f"Skipping duplicate prefix: {prefix_lower}")
                 continue
-            if os.getenv(secret_key):                # only add if both key+secret exist
-                gf_account_id = os.getenv(f"{prefix}_GHOSTFOLIO_ACCOUNT_ID") or os.getenv("GHOSTFOLIO_ACCOUNT_ID")
-                ib_portfolio_id = os.getenv(f"{prefix}_INVESTBRAIN_PORTFOLIO_ID") or os.getenv("INVESTBRAIN_PORTFOLIO_ID")
-                debug(f"{prefix}: GF={'***' if gf_account_id else 'None'}, IB={'***' if ib_portfolio_id else 'None'}")
                 
-                # Accept account if it has either Ghostfolio OR Investbrain configuration
-                if not gf_account_id and not ib_portfolio_id:
-                    debug(f"Skipping {prefix}: no Ghostfolio or Investbrain account configured")
-                    missing_platform_ids.append(prefix)
-                    seen_prefixes.append(prefix_lower)
-                    continue
-                    
-                debug(f"Adding account {prefix}")
-                accounts.append({
-                    "prefix": prefix_lower,
-                    "api_key": os.getenv(key),
-                    "api_secret": os.getenv(secret_key),
-                    # These are used by run-all.sh, not by fetch logic
-                    "ghostfolio_account_id": gf_account_id,
-                    "investbrain_portfolio_id": ib_portfolio_id,
-                })
-                seen_prefixes.append(prefix_lower)
-            else:
-                warn(f"Skipping {prefix}: no API_SECRET found")
+            seen_prefixes.append(prefix_lower)
+            valid_prefixes.append(prefix)
+
+    # 2. Process each valid prefix and build accounts list
+    for prefix in valid_prefixes:
+        prefix_lower = prefix.lower()
+        key = f"{prefix}_API_KEY"
+        secret_key = f"{prefix}_API_SECRET"
+        
+        # Only allow unprefixed fallback if exactly one account is configured, or prefix is exactly "default"
+        can_fallback = (len(valid_prefixes) == 1) or (prefix_lower == "default")
+        
+        gf_account_id = os.getenv(f"{prefix}_GHOSTFOLIO_ACCOUNT_ID")
+        if not gf_account_id and can_fallback:
+            gf_account_id = os.getenv("GHOSTFOLIO_ACCOUNT_ID")
+            
+        ib_portfolio_id = os.getenv(f"{prefix}_INVESTBRAIN_PORTFOLIO_ID")
+        if not ib_portfolio_id and can_fallback:
+            ib_portfolio_id = os.getenv("INVESTBRAIN_PORTFOLIO_ID")
+            
+        debug(f"{prefix}: GF={'***' if gf_account_id else 'None'}, IB={'***' if ib_portfolio_id else 'None'}")
+        
+        # Accept account if it has either Ghostfolio OR Investbrain configuration
+        if not gf_account_id and not ib_portfolio_id:
+            debug(f"Skipping {prefix}: no Ghostfolio or Investbrain account configured")
+            missing_platform_ids.append(prefix)
+            continue
+            
+        debug(f"Adding account {prefix}")
+        accounts.append({
+            "prefix": prefix_lower,
+            "api_key": os.getenv(key),
+            "api_secret": os.getenv(secret_key),
+            # These are used by run-all.sh, not by fetch logic
+            "ghostfolio_account_id": gf_account_id,
+            "investbrain_portfolio_id": ib_portfolio_id,
+        })
 
     if missing_platform_ids:
         missing = ", ".join(f"{p}_GHOSTFOLIO_ACCOUNT_ID or {p}_INVESTBRAIN_PORTFOLIO_ID" for p in missing_platform_ids)
@@ -541,9 +560,8 @@ def get_earliest_year(headers: dict) -> int:
     if oldest_date:
         info(f"Overall earliest activity: {oldest_date.strftime('%Y-%m-%d')}")
         return oldest_date.year
-    else:
-        warn("No activity found, defaulting to current year")
-        return datetime.now(timezone.utc).year
+    warn("No activity found, defaulting to current year")
+    return datetime.now(timezone.utc).year
 
 
 def request_export(headers: dict, time_from: datetime, time_to: datetime) -> int:
@@ -883,7 +901,7 @@ def main():
 
     # Execute run-all.sh with _data_dir as cwd to ensure it finds the correct directories.
     # Do NOT use check=True — we inspect per-account results even on partial failure.
-    run_result = subprocess.run(["bash", str(script_path)], cwd=str(_data_dir))
+    run_result = subprocess.run(["bash", str(script_path)], cwd=str(_data_dir), check=False)
 
     # Determine per-account success AFTER run-all.sh completes (never mid-pipeline).
     # An account succeeded only if its specific CSV is not in input/, quarantine/, or unverified/

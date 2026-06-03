@@ -1,16 +1,14 @@
-__pycache__/t212_fetch.cpython-312.pyc
-tests/__pycache__/test_t212_fetch.cpython-312.pyc
-#INSTRUCTIONS.md
+/INSTRUCTIONS.md
 tofix.md
 .env
 post.md
 tests/temp/differenace-in-balance.md
 
 
-/log
+/log/
 /prompt.txt
-__pycache__/
-/INSTRUCTIONS.md
+**/__pycache__/
+
 /logs.txt
 /history.txt
 /.codex
@@ -26,8 +24,13 @@ __pycache__/
 /testing-command.sh
 /logs-1st-run.txt
 /testing-command-copy.sh
-investbrain-arch/app/Models/Transaction.php
-investbrain-arch/github_issue.md
-investbrain-arch/command_responses_log.md
-restricted
-.coderabbit copy.yaml
+/investbrain-arch/
+/restricted/
+/.coderabbit copy.yaml
+
+
+# AI Code Review temporary files
+/.ai-code-review/
+testit.sh
+
+testing-command-new.sh

@@ -42,7 +42,7 @@ log_fatal() { echo "[FATAL] $*"; }
 # countdown_sleep pauses execution for the given number of seconds and, when the log level is TRACE, prints a per-second "Sleeping Ns..." countdown to stdout.
 countdown_sleep() {
     local seconds=$1
-    while [ $seconds -gt 0 ]; do
+    while [ "$seconds" -gt 0 ]; do
         [[ $_CURRENT_LEVEL -le 0 ]] && echo -ne "\rSleeping ${seconds}s... "
         sleep 1
         seconds=$((seconds - 1))
@@ -348,6 +348,16 @@ process_account() {
       done
       log_info "✅ Success: ${#json_files[@]} JSON file(s) for $csv_name ($total_count activities imported)"
 
+      # Dry-run guard: if import was not actually executed, do NOT archive the CSV.
+      # The source file must remain in input/ so that the next real run
+      # (with GHOSTFOLIO_IMPORT=true) still picks it up, and t212_fetch.py
+      # will not persist last_fetch for an unimported CSV.
+      if [[ "${GHOSTFOLIO_IMPORT:-true}" != "true" ]]; then
+        log_warn "⚠️  Import was skipped (GHOSTFOLIO_IMPORT=${GHOSTFOLIO_IMPORT:-true}). CSV will NOT be archived; run again with GHOSTFOLIO_IMPORT=true to complete the import."
+        rm -f "temp/$csv_name"
+        continue
+      fi
+
     elif [[ "$platform" == "investbrain" ]]; then
       # Investbrain import using Python script
       validate_only="${INVESTBRAIN_VALIDATE:-true}"
@@ -361,7 +371,7 @@ process_account() {
       log_trace "  INVESTBRAIN_URL: $INVESTBRAIN_URL"
       log_trace "  INVESTBRAIN_API_TOKEN: ***"
       log_trace "  Current working directory: $(pwd)"
-      log_trace "  Files in current dir: $(ls -la investbrain_import.py | head -1)"
+      log_trace "  Files in current dir: $(stat -c '%A %s %n' investbrain_import.py 2>/dev/null || echo 'investbrain_import.py not found')"
 
       if [[ "$validate_only" == "true" ]]; then
         log_info "🔍 Validating CSV for Investbrain import..."
@@ -396,6 +406,16 @@ process_account() {
         }
         log_info "✅ Import successful"
         investbrain_any_success=1
+      fi
+
+      # Dry-run guard: if import was not actually executed, do NOT write a success
+      # marker or archive the CSV. The source file must remain in input/ so that the
+      # next real run (with INVESTBRAIN_IMPORT=true) still picks it up, and
+      # t212_fetch.py will not persist last_fetch for an unimported CSV.
+      if [[ "$import_flag" != "true" ]]; then
+        log_warn "⚠️  Import was skipped (INVESTBRAIN_IMPORT=$import_flag). CSV will NOT be archived; run again with INVESTBRAIN_IMPORT=true to complete the import."
+        rm -f "temp/$csv_name"
+        continue
       fi
 
       # Create a simple success marker for Investbrain (no JSON files)

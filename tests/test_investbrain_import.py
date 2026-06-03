@@ -9,6 +9,7 @@ Run:       python3 -m unittest tests/test_investbrain_import.py -v
 
 import unittest
 from unittest.mock import patch, MagicMock, call
+from collections import Counter
 import os
 import sys
 import json
@@ -192,6 +193,42 @@ class TestFetchExistingFingerprintsRetry(unittest.TestCase):
         mock_sleep.assert_called_once_with(2.0)
 
     @patch("investbrain_import.requests.get")
+    def test_pagination_without_meta_key(self, mock_get):
+        """Fetches multiple pages when 'meta' key is missing but 'links.next' exists.
+
+        Verifies that pagination correctly falls back to checking 'links.next'
+        when the 'meta' object is absent or lacks 'current_page'/'last_page',
+        preventing premature truncation of results.
+        """
+        tx1 = _tx("AAPL", "BUY", "2025-01-01", 10.0, 150.0)
+        tx2 = _tx("GOOG", "BUY", "2025-01-02", 5.0, 2000.0)
+
+        # Page 1: has data and next link, but no meta
+        page1 = {
+            "data": [tx1],
+            "links": {"next": "http://example.com/next"}
+        }
+        # Page 2: has data and no next link, no meta
+        page2 = {
+            "data": [tx2],
+            "links": {"next": None}
+        }
+
+        mock_get.side_effect = [
+            _mock_response(200, page1),
+            _mock_response(200, page2),
+        ]
+
+        result = investbrain_import.fetch_existing_fingerprints(
+            PORTFOLIO, API_URL, HEADERS
+        )
+
+        self.assertEqual(len(result), 2)
+        self.assertIn(("AAPL", "BUY", "2025-01-01", 10.0), result)
+        self.assertIn(("GOOG", "BUY", "2025-01-02", 5.0), result)
+        self.assertEqual(mock_get.call_count, 2)
+
+    @patch("investbrain_import.requests.get")
     def test_permanent_4xx_raises_immediately(self, mock_get):
         """Raises RuntimeError immediately on permanent 4xx (non-429) error.
 
@@ -285,8 +322,21 @@ class TestFetchExistingFingerprintsRetry(unittest.TestCase):
 
         result = investbrain_import.fetch_existing_fingerprints(PORTFOLIO, API_URL, HEADERS)
 
-        self.assertEqual(result, set())
+        self.assertEqual(result, Counter())
         self.assertEqual(mock_get.call_count, 1)
+
+    @patch("investbrain_import.requests.get")
+    def test_duplicate_existing_transactions_preserve_counts(self, mock_get):
+        """Keeps duplicate DB fingerprints as counts instead of collapsing them."""
+        tx1 = _tx("AAPL", "BUY", "2025-01-15", 10.0, 150.0)
+        tx2 = _tx("AAPL", "BUY", "2025-01-15", 10.0, 151.0)
+        body = _page_body([tx1, tx2], current_page=1, last_page=1)
+        mock_get.return_value = _mock_response(200, body)
+
+        result = investbrain_import.fetch_existing_fingerprints(PORTFOLIO, API_URL, HEADERS)
+
+        self.assertEqual(result[("AAPL", "BUY", "2025-01-15", 10.0)], 2)
+        self.assertEqual(sum(result.values()), 2)
 
     @patch("investbrain_import.time.sleep")
     @patch("investbrain_import.requests.get")
@@ -372,13 +422,13 @@ class TestImportToInvestbrainDedupFailure(unittest.TestCase):
 
     @patch("investbrain_import.fetch_existing_fingerprints")
     @patch("investbrain_import.requests.post")
-    def test_intra_csv_duplicate_skipped(self, mock_post, mock_fetch):
-        """Verifies that identical transactions within the same CSV are deduplicated.
+    def test_intra_csv_duplicate_imported_when_not_already_in_db(self, mock_post, mock_fetch):
+        """Verifies that identical transactions within the same CSV are both imported.
 
-        Creates a CSV with two identical BUYs. The first should be POSTed (and added
-        to the fingerprints set), and the second should be skipped without POSTing.
+        Creates a CSV with two identical BUYs. With no existing DB copies, both
+        rows are legitimate imports and should be POSTed.
         """
-        mock_fetch.return_value = set()
+        mock_fetch.return_value = Counter()
         mock_post.return_value = _mock_response(201)
 
         with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
@@ -392,13 +442,38 @@ class TestImportToInvestbrainDedupFailure(unittest.TestCase):
                 csv_path, PORTFOLIO, API_URL, "test-token", validate_only=False
             )
 
-            # 1 success (first row), 1 dedup skipped (second row)
+            self.assertEqual(success, 2)
+            self.assertEqual(errors, 0)
+            self.assertEqual(non_trade_skipped, 0)
+            self.assertEqual(dedup_skipped, 0)
+
+            self.assertEqual(mock_fetch.call_count, 1)
+            self.assertEqual(mock_post.call_count, 2)
+        finally:
+            os.unlink(csv_path)
+
+    @patch("investbrain_import.fetch_existing_fingerprints")
+    @patch("investbrain_import.requests.post")
+    def test_existing_duplicate_count_is_consumed_per_matching_csv_row(self, mock_post, mock_fetch):
+        """Skips only as many matching CSV rows as already exist in the DB."""
+        mock_fetch.return_value = Counter({("AAPL", "BUY", "2025-01-15", 10.0): 1})
+        mock_post.return_value = _mock_response(201)
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("Action,Time,Ticker,No. of shares,Price / share,Currency (Price / share)\n")
+            f.write("Market buy,2025-01-15 10:00:00,AAPL,10,150.00,USD\n")
+            f.write("Market buy,2025-01-15 11:00:00,AAPL,10,151.00,USD\n")
+            csv_path = f.name
+
+        try:
+            success, errors, non_trade_skipped, dedup_skipped = investbrain_import.import_to_investbrain(
+                csv_path, PORTFOLIO, API_URL, "test-token", validate_only=False
+            )
+
             self.assertEqual(success, 1)
             self.assertEqual(errors, 0)
             self.assertEqual(non_trade_skipped, 0)
             self.assertEqual(dedup_skipped, 1)
-
-            # fetch should be called once, POST should be called only ONCE
             self.assertEqual(mock_fetch.call_count, 1)
             self.assertEqual(mock_post.call_count, 1)
         finally:
@@ -409,7 +484,7 @@ class TestImportToInvestbrainDedupFailure(unittest.TestCase):
     def test_shifted_buy_duplicate_skipped(self, mock_post, mock_fetch):
         """Verifies that a BUY shifted to D-1 is skipped if it hits an existing fingerprint."""
         # Pre-seed a fingerprint for AAPL BUY on 2025-01-14
-        mock_fetch.return_value = {("AAPL", "BUY", "2025-01-14", 10.0)}
+        mock_fetch.return_value = Counter({("AAPL", "BUY", "2025-01-14", 10.0): 1})
         mock_post.return_value = _mock_response(201)
 
         with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
@@ -462,7 +537,7 @@ class TestTransactionPostRetry(unittest.TestCase):
 
     @patch("investbrain_import.time.sleep")
     @patch("investbrain_import.requests.post")
-    @patch("investbrain_import.fetch_existing_fingerprints", return_value=set())
+    @patch("investbrain_import.fetch_existing_fingerprints", return_value=Counter())
     def test_post_retry_on_429_then_success(self, mock_fetch, mock_post, mock_sleep):
         """Retries on HTTP 429 with exponential backoff, then succeeds.
 
@@ -490,7 +565,7 @@ class TestTransactionPostRetry(unittest.TestCase):
 
     @patch("investbrain_import.time.sleep")
     @patch("investbrain_import.requests.post")
-    @patch("investbrain_import.fetch_existing_fingerprints", return_value=set())
+    @patch("investbrain_import.fetch_existing_fingerprints", return_value=Counter())
     def test_post_retry_on_500_then_success(self, mock_fetch, mock_post, mock_sleep):
         """Retries on HTTP 500 with exponential backoff, then succeeds.
 
@@ -519,7 +594,7 @@ class TestTransactionPostRetry(unittest.TestCase):
 
     @patch("investbrain_import.time.sleep")
     @patch("investbrain_import.requests.post")
-    @patch("investbrain_import.fetch_existing_fingerprints", return_value=set())
+    @patch("investbrain_import.fetch_existing_fingerprints", return_value=Counter())
     def test_post_retry_on_network_error_then_success(self, mock_fetch, mock_post, mock_sleep):
         """Retries on network exception (ConnectionError), then succeeds.
 
@@ -546,7 +621,7 @@ class TestTransactionPostRetry(unittest.TestCase):
 
     @patch("investbrain_import.time.sleep")
     @patch("investbrain_import.requests.post")
-    @patch("investbrain_import.fetch_existing_fingerprints", return_value=set())
+    @patch("investbrain_import.fetch_existing_fingerprints", return_value=Counter())
     def test_post_permanent_4xx_no_retry(self, mock_fetch, mock_post, mock_sleep):
         """Counts error immediately on permanent 4xx (non-429) — no retry.
 
@@ -574,7 +649,7 @@ class TestTransactionPostRetry(unittest.TestCase):
 
     @patch("investbrain_import.time.sleep")
     @patch("investbrain_import.requests.post")
-    @patch("investbrain_import.fetch_existing_fingerprints", return_value=set())
+    @patch("investbrain_import.fetch_existing_fingerprints", return_value=Counter())
     def test_post_retry_exhaustion_counts_error(self, mock_fetch, mock_post, mock_sleep):
         """Counts error after all POST retries are exhausted.
 
@@ -598,6 +673,52 @@ class TestTransactionPostRetry(unittest.TestCase):
         finally:
             os.unlink(csv_path)
 
+    @patch("investbrain_import.time.sleep")
+    @patch("investbrain_import.requests.post")
+    @patch("investbrain_import.fetch_existing_fingerprints", return_value=Counter())
+    def test_post_422_quantity_error_does_not_crash(self, mock_fetch, mock_post, mock_sleep):
+        """Verifies that a 422 error containing 'quantity must not be greater' does not raise UnboundLocalError."""
+        resp = _mock_response(422)
+        resp.text = '{"message":"quantity must not be greater than..."}'
+        mock_post.return_value = resp
+        csv_path = _create_test_csv()
+        try:
+            success, errors, non_trade_skipped, dedup_skipped = investbrain_import.import_to_investbrain(
+                csv_path, PORTFOLIO, API_URL, "test-token"
+            )
+            self.assertEqual(success, 0)
+            self.assertEqual(errors, 1)
+        finally:
+            os.unlink(csv_path)
+
+
+# =============================================================================
+# 4. CSV Parsing Validation
+# =============================================================================
+class TestCsvParsingValidation(unittest.TestCase):
+    """Tests for CSV parsing validation and error counting."""
+
+    @patch("investbrain_import.fetch_existing_fingerprints", return_value=Counter())
+    def test_missing_time_increments_error_count(self, mock_fetch):
+        """A recognized trade row missing Time raises ValueError and increments error_count."""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("Action,Time,Ticker,No. of shares,Price / share,Currency (Price / share)\n")
+            # First row valid
+            f.write("Market buy,2025-01-15 10:00:00,AAPL,10,150.00,USD\n")
+            # Second row missing Time
+            f.write("Market sell,,AAPL,5,155.00,USD\n")
+            csv_path = f.name
+
+        try:
+            success, errors, non_trade_skipped, dedup_skipped = investbrain_import.import_to_investbrain(
+                csv_path, PORTFOLIO, API_URL, "test-token", validate_only=True
+            )
+            self.assertEqual(success, 1) # First row succeeds validation
+            self.assertEqual(errors, 1)  # Second row fails validation due to missing Time
+            self.assertEqual(non_trade_skipped, 0)
+            self.assertEqual(dedup_skipped, 0)
+        finally:
+            os.unlink(csv_path)
 
 if __name__ == "__main__":
     unittest.main()
