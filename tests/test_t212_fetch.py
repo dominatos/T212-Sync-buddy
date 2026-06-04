@@ -746,6 +746,65 @@ class TestPageEarliest(unittest.TestCase):
             f"Expected valid transaction URL, got: {second_call_url}",
         )
 
+    @patch("t212_fetch.safe_get")
+    def test_pagination_404_accepted_as_end_of_data(self, mock_get):
+        """Accepts partial results if subsequent page returns HTTP 404.
+
+        Verifies the workaround for the Trading 212 API bug where the
+        transactions endpoint returns an invalid cursor (404 Not Found)
+        on subsequent pages. The script should log a warning and return
+        the oldest date found so far, rather than crashing.
+        """
+        page1 = MagicMock()
+        page1.json.return_value = {
+            "items": [{"date": "2025-06-15T10:00:00+00:00"}],
+            "nextPagePath": "limit=50&cursor=invalid_buggy_cursor",
+        }
+        page1.headers = {"x-ratelimit-remaining": "10"}
+        
+        # Simulate 404 error on second page
+        mock_404_error = requests.exceptions.HTTPError("404 Client Error: Not Found")
+        mock_404_error.response = MagicMock()
+        mock_404_error.response.status_code = 404
+        
+        mock_get.side_effect = [page1, mock_404_error]
+
+        # Ensure we don't crash and instead return the date from page 1
+        result = t212_fetch._page_earliest(
+            {},
+            "https://live.trading212.com/api/v0/equity/history/transactions?limit=50",
+            lambda x: x.get("date"),
+        )
+        
+        self.assertEqual(result.year, 2025)
+        self.assertEqual(mock_get.call_count, 2)
+
+    @patch("t212_fetch.safe_get")
+    def test_pagination_non_404_http_error_propagates(self, mock_get):
+        """Non-404 HTTP errors (e.g. 500 Server Error) still propagate normally.
+        
+        Ensures we only swallow 404 errors as a pagination end-of-data signal.
+        """
+        page1 = MagicMock()
+        page1.json.return_value = {
+            "items": [{"date": "2025-06-15T10:00:00+00:00"}],
+            "nextPagePath": "limit=50&cursor=abc",
+        }
+        page1.headers = {"x-ratelimit-remaining": "10"}
+        
+        mock_500_error = requests.exceptions.HTTPError("500 Server Error")
+        mock_500_error.response = MagicMock()
+        mock_500_error.response.status_code = 500
+        
+        mock_get.side_effect = [page1, mock_500_error]
+
+        with self.assertRaises(requests.exceptions.HTTPError):
+            t212_fetch._page_earliest(
+                {},
+                "http://test.com",
+                lambda x: x.get("date"),
+            )
+
 
 # =============================================================================
 # 10a. resolve_next_page_url
