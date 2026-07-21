@@ -216,7 +216,7 @@ def parse_csv_row(row: dict) -> Optional[dict]:
         return None  # Non-trade row (deposit, dividend, etc.) — skip silently
 
     # Extract required fields
-    time_str = row.get('Time', '').strip()
+    time_str = row.get('Time (UTC)', row.get('Time', '')).strip()
     if not time_str:
         raise ValueError(f"Missing Time field for trade row: {row}")
 
@@ -227,10 +227,12 @@ def parse_csv_row(row: dict) -> Optional[dict]:
             # ISO format with T — fromisoformat yields aware datetime when offset is present
             date_obj = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
         else:
+            # Strip timezone offset (e.g. +00:00) before parsing — we attach UTC anyway
+            time_no_tz = time_str.split('+')[0].strip()
             # Try common formats; attach UTC so the result is timezone-aware
             for fmt in ['%Y-%m-%d %H:%M:%S', '%d/%m/%Y %H:%M:%S', '%m/%d/%Y %H:%M:%S']:
                 try:
-                    date_obj = datetime.strptime(time_str, fmt).replace(tzinfo=timezone.utc)
+                    date_obj = datetime.strptime(time_no_tz, fmt).replace(tzinfo=timezone.utc)
                     break
                 except ValueError:
                     continue

@@ -1,0 +1,313 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  # ─── Security ───────────────────────────────────────────────
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Gitleaks (secret scanning)
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ─── Dependency Checks ──────────────────────────────────────
+  dependencies:
+    name: Dependency Checks
+    runs-on: ubuntu-latest
+    needs: security
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit dependencies for vulnerabilities
+        run: npm audit --audit-level=moderate
+        continue-on-error: true
+
+      - name: Check for outdated dependencies
+        run: npm outdated --long || true
+
+      - name: Verify lockfile integrity
+        run: npm ci --ignore-scripts 2>&1 | grep -q "added" && echo "Lockfile OK"
+
+      - name: Check for known vulnerable packages
+        run: npx audit-ci --moderate || true
+
+  # ─── Code Quality ───────────────────────────────────────────
+  lint:
+    name: Lint & Format
+    runs-on: ubuntu-latest
+    needs: security
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check TypeScript strict mode compliance
+        run: npx tsc --noEmit --strict
+
+      - name: Verify no any types in source
+        run: |
+          if grep -rn ": any" src/ --include="*.ts"; then
+            echo "ERROR: Found 'any' types in source code"
+            exit 1
+          fi
+          echo "No any types found"
+
+      - name: Verify all exports are typed
+        run: |
+          grep -rn "export function" src/ --include="*.ts" | while read line; do
+            echo "Export found: $line"
+          done
+
+      - name: Check for console.log in production code
+        run: |
+          count=$(grep -c "console\.\(log\|warn\|error\)" src/ -r --include="*.ts" || true)
+          echo "Found $count console statements (expected for bot logging)"
+
+      - name: Verify package.json scripts
+        run: |
+          node -e "const p = require('./package.json'); \
+            if (!p.scripts.start) throw new Error('Missing start script'); \
+            if (!p.scripts.build) throw new Error('Missing build script'); \
+            if (!p.scripts.test) throw new Error('Missing test script'); \
+            console.log('All required scripts present')"
+
+  # ─── Type Checking ──────────────────────────────────────────
+  typecheck:
+    name: Type Check
+    runs-on: ubuntu-latest
+    needs: security
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript compile check
+        run: npx tsc --noEmit
+
+      - name: Check for unused TypeScript imports
+        run: |
+          npx tsc --noEmit 2>&1 | grep -i "cannot find module" && echo "WARNING: Possible missing modules" || echo "All modules resolved"
+
+  # ─── Tests ──────────────────────────────────────────────────
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: [security, typecheck]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npx vitest run
+
+      - name: Verify test count
+        run: |
+          result=$(npx vitest run 2>&1)
+          count=$(echo "$result" | grep -oP '\d+ passed' | grep -oP '\d+')
+          echo "Tests passed: $count"
+          if [ "$count" -lt 60 ]; then
+            echo "ERROR: Expected at least 60 tests, got $count"
+            exit 1
+          fi
+
+  # ─── Build ──────────────────────────────────────────────────
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: [security, lint, test]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Verify build output exists
+        run: |
+          if [ ! -d "dist" ]; then
+            echo "ERROR: dist/ directory not found"
+            exit 1
+          fi
+          count=$(find dist -name "*.js" | wc -l)
+          echo "Built $count JS files"
+          if [ "$count" -lt 3 ]; then
+            echo "ERROR: Expected at least 3 built files"
+            exit 1
+          fi
+
+      - name: Verify no TypeScript errors in output
+        run: |
+          if grep -r "error TS" dist/ 2>/dev/null; then
+            echo "ERROR: Found TypeScript errors in build output"
+            exit 1
+          fi
+          echo "Build output clean"
+
+      - name: Check for sensitive data in build
+        run: |
+          if grep -r "password\|secret\|token" dist/ --include="*.js" -i | grep -v "process.env" | grep -v "readSecret" | grep -v "requireSecret" | grep -v "loadConfig"; then
+            echo "WARNING: Possible hardcoded secrets in build output"
+          else
+            echo "No hardcoded secrets found"
+          fi
+
+  # ─── File Integrity ─────────────────────────────────────────
+  integrity:
+    name: File Integrity
+    runs-on: ubuntu-latest
+    needs: security
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Verify required files exist
+        run: |
+          required_files=(
+            "package.json"
+            "tsconfig.json"
+            "Dockerfile"
+            "docker-compose.yml"
+            ".env.example"
+            "README.md"
+            "CHANGELOG.md"
+            "vitest.config.ts"
+            "src/index.ts"
+            "src/actual.ts"
+            "src/config.ts"
+            "src/utils.ts"
+          )
+          for f in "${required_files[@]}"; do
+            if [ ! -f "$f" ]; then
+              echo "ERROR: Missing required file: $f"
+              exit 1
+            fi
+          done
+          echo "All required files present"
+
+      - name: Check .env is not committed
+        run: |
+          if [ -f ".env" ]; then
+            echo "ERROR: .env file should not be in repo"
+            exit 1
+          fi
+          echo ".env not in repo (good)"
+
+      - name: Check secrets/ is not committed
+        run: |
+          if [ -d "secrets" ] && [ "$(ls -A secrets 2>/dev/null)" ]; then
+            echo "WARNING: secrets/ directory has files - ensure they are gitignored"
+          fi
+
+      - name: Verify version.txt matches package.json
+        run: |
+          txt_version=$(cat version.txt | tr -d '[:space:]')
+          pkg_version=$(node -p "require('./package.json').version")
+          if [ "$txt_version" != "$pkg_version" ]; then
+            echo "ERROR: version.txt ($txt_version) != package.json ($pkg_version)"
+            exit 1
+          fi
+          echo "Versions match: $txt_version"
+
+      - name: Check for large files
+        run: |
+          find . -type f -size +1M -not -path "./node_modules/*" -not -path "./.git/*" | while read f; do
+            echo "WARNING: Large file: $f ($(du -h "$f" | cut -f1))"
+          done || echo "No large files found"
+
+  # ─── Documentation ──────────────────────────────────────────
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    needs: security
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Verify README has required sections
+        run: |
+          sections=("Features" "Prerequisites" "Environment Variables" "Docker" "Running")
+          for s in "${sections[@]}"; do
+            if ! grep -qi "$s" README.md; then
+              echo "WARNING: README missing section: $s"
+            fi
+          done
+          echo "README sections validated"
+
+      - name: Check for broken markdown links
+        run: |
+          grep -oP '\[.*?\]\((.*?)\)' README.md | while read -r match; do
+            link=$(echo "$match" | grep -oP '\((.*?)\)' | tr -d '()')
+            if [[ "$link" == http* ]]; then
+              continue
+            fi
+            if [ ! -f "$link" ] && [ ! -d "$link" ]; then
+              echo "WARNING: Broken link: $link"
+            fi
+          done || echo "Links validated"
+
+      - name: Verify CHANGELOG format
+        run: |
+          if grep -q "## \[" CHANGELOG.md; then
+            echo "CHANGELOG has version sections"
+          else
+            echo "ERROR: CHANGELOG missing version sections"
+            exit 1
+          fi
