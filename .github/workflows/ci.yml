@@ -22,9 +22,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # ─── Dependency Checks ──────────────────────────────────────
-  dependencies:
-    name: Dependency Checks
+  # ─── Python ─────────────────────────────────────────────────
+  python:
+    name: Python Checks
     runs-on: ubuntu-latest
     needs: security
     steps:
@@ -32,30 +32,28 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-python@v5
         with:
-          node-version: "22"
-          cache: "npm"
+          python-version: "3.12"
 
       - name: Install dependencies
-        run: npm ci
+        run: pip install -r requirements.txt
 
-      - name: Audit dependencies for vulnerabilities
-        run: npm audit --audit-level=moderate
-        continue-on-error: true
+      - name: Syntax check all Python scripts
+        run: |
+          python3 -m py_compile t212_fetch.py
+          python3 -m py_compile investbrain_import.py
+          python3 -m py_compile preprocess_isin.py
+          echo "All Python scripts compile successfully"
 
-      - name: Check for outdated dependencies
-        run: npm outdated --long || true
+      - name: Run Python unit tests
+        run: |
+          python3 -m unittest tests/test_t212_fetch.py -v
+          python3 -m unittest tests/test_investbrain_import.py -v
 
-      - name: Verify lockfile integrity
-        run: npm ci --ignore-scripts 2>&1 | grep -q "added" && echo "Lockfile OK"
-
-      - name: Check for known vulnerable packages
-        run: npx audit-ci --moderate || true
-
-  # ─── Code Quality ───────────────────────────────────────────
-  lint:
-    name: Lint & Format
+  # ─── Bash ───────────────────────────────────────────────────
+  bash:
+    name: Bash Checks
     runs-on: ubuntu-latest
     needs: security
     steps:
@@ -63,47 +61,20 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "22"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Check TypeScript strict mode compliance
-        run: npx tsc --noEmit --strict
-
-      - name: Verify no any types in source
+      - name: Install BATS
         run: |
-          if grep -rn ": any" src/ --include="*.ts"; then
-            echo "ERROR: Found 'any' types in source code"
-            exit 1
-          fi
-          echo "No any types found"
+          sudo apt-get update
+          sudo apt-get install -y bats
 
-      - name: Verify all exports are typed
-        run: |
-          grep -rn "export function" src/ --include="*.ts" | while read line; do
-            echo "Export found: $line"
-          done
+      - name: Bash syntax check
+        run: bash -n run-all.sh
 
-      - name: Check for console.log in production code
-        run: |
-          count=$(grep -c "console\.\(log\|warn\|error\)" src/ -r --include="*.ts" || true)
-          echo "Found $count console statements (expected for bot logging)"
+      - name: Run BATS integration tests
+        run: bats tests/test_run_all.bats
 
-      - name: Verify package.json scripts
-        run: |
-          node -e "const p = require('./package.json'); \
-            if (!p.scripts.start) throw new Error('Missing start script'); \
-            if (!p.scripts.build) throw new Error('Missing build script'); \
-            if (!p.scripts.test) throw new Error('Missing test script'); \
-            console.log('All required scripts present')"
-
-  # ─── Type Checking ──────────────────────────────────────────
-  typecheck:
-    name: Type Check
+  # ─── ShellCheck ─────────────────────────────────────────────
+  shellcheck:
+    name: ShellCheck Lint
     runs-on: ubuntu-latest
     needs: security
     steps:
@@ -111,101 +82,33 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "22"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: TypeScript compile check
-        run: npx tsc --noEmit
-
-      - name: Check for unused TypeScript imports
+      - name: Install ShellCheck
         run: |
-          npx tsc --noEmit 2>&1 | grep -i "cannot find module" && echo "WARNING: Possible missing modules" || echo "All modules resolved"
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
 
-  # ─── Tests ──────────────────────────────────────────────────
-  test:
-    name: Unit Tests
+      - name: Lint run-all.sh
+        run: shellcheck run-all.sh
+
+  # ─── Docker Build ───────────────────────────────────────────
+  docker:
+    name: Docker Build
     runs-on: ubuntu-latest
-    needs: [security, typecheck]
+    needs: [security, python, bash]
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "22"
-          cache: "npm"
+      - name: Build Docker image
+        run: docker build -t t212-sync-buddy:test .
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run tests
-        run: npx vitest run
-
-      - name: Verify test count
+      - name: Verify image has required scripts
         run: |
-          result=$(npx vitest run 2>&1)
-          count=$(echo "$result" | grep -oP '\d+ passed' | grep -oP '\d+')
-          echo "Tests passed: $count"
-          if [ "$count" -lt 60 ]; then
-            echo "ERROR: Expected at least 60 tests, got $count"
-            exit 1
-          fi
-
-  # ─── Build ──────────────────────────────────────────────────
-  build:
-    name: Build
-    runs-on: ubuntu-latest
-    needs: [security, lint, test]
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "22"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build TypeScript
-        run: npm run build
-
-      - name: Verify build output exists
-        run: |
-          if [ ! -d "dist" ]; then
-            echo "ERROR: dist/ directory not found"
-            exit 1
-          fi
-          count=$(find dist -name "*.js" | wc -l)
-          echo "Built $count JS files"
-          if [ "$count" -lt 3 ]; then
-            echo "ERROR: Expected at least 3 built files"
-            exit 1
-          fi
-
-      - name: Verify no TypeScript errors in output
-        run: |
-          if grep -r "error TS" dist/ 2>/dev/null; then
-            echo "ERROR: Found TypeScript errors in build output"
-            exit 1
-          fi
-          echo "Build output clean"
-
-      - name: Check for sensitive data in build
-        run: |
-          if grep -r "password\|secret\|token" dist/ --include="*.js" -i | grep -v "process.env" | grep -v "readSecret" | grep -v "requireSecret" | grep -v "loadConfig"; then
-            echo "WARNING: Possible hardcoded secrets in build output"
-          else
-            echo "No hardcoded secrets found"
-          fi
+          docker run --rm t212-sync-buddy:test ls /app/run-all.sh
+          docker run --rm t212-sync-buddy:test ls /app/t212_fetch.py
+          docker run --rm t212-sync-buddy:test ls /app/investbrain_import.py
+          echo "All required scripts present in image"
 
   # ─── File Integrity ─────────────────────────────────────────
   integrity:
@@ -220,18 +123,18 @@ jobs:
       - name: Verify required files exist
         run: |
           required_files=(
-            "package.json"
-            "tsconfig.json"
+            "t212_fetch.py"
+            "run-all.sh"
+            "investbrain_import.py"
+            "preprocess_isin.py"
             "Dockerfile"
             "docker-compose.yml"
-            ".env.example"
+            "requirements.txt"
+            ".env.sample"
             "README.md"
-            "CHANGELOG.md"
-            "vitest.config.ts"
-            "src/index.ts"
-            "src/actual.ts"
-            "src/config.ts"
-            "src/utils.ts"
+            "tests/test_t212_fetch.py"
+            "tests/test_investbrain_import.py"
+            "tests/test_run_all.bats"
           )
           for f in "${required_files[@]}"; do
             if [ ! -f "$f" ]; then
@@ -249,65 +152,8 @@ jobs:
           fi
           echo ".env not in repo (good)"
 
-      - name: Check secrets/ is not committed
-        run: |
-          if [ -d "secrets" ] && [ "$(ls -A secrets 2>/dev/null)" ]; then
-            echo "WARNING: secrets/ directory has files - ensure they are gitignored"
-          fi
-
-      - name: Verify version.txt matches package.json
-        run: |
-          txt_version=$(cat version.txt | tr -d '[:space:]')
-          pkg_version=$(node -p "require('./package.json').version")
-          if [ "$txt_version" != "$pkg_version" ]; then
-            echo "ERROR: version.txt ($txt_version) != package.json ($pkg_version)"
-            exit 1
-          fi
-          echo "Versions match: $txt_version"
-
       - name: Check for large files
         run: |
-          find . -type f -size +1M -not -path "./node_modules/*" -not -path "./.git/*" | while read f; do
+          find . -type f -size +1M -not -path "./.git/*" -not -path "./.state/*" | while read f; do
             echo "WARNING: Large file: $f ($(du -h "$f" | cut -f1))"
           done || echo "No large files found"
-
-  # ─── Documentation ──────────────────────────────────────────
-  docs:
-    name: Documentation
-    runs-on: ubuntu-latest
-    needs: security
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Verify README has required sections
-        run: |
-          sections=("Features" "Prerequisites" "Environment Variables" "Docker" "Running")
-          for s in "${sections[@]}"; do
-            if ! grep -qi "$s" README.md; then
-              echo "WARNING: README missing section: $s"
-            fi
-          done
-          echo "README sections validated"
-
-      - name: Check for broken markdown links
-        run: |
-          grep -oP '\[.*?\]\((.*?)\)' README.md | while read -r match; do
-            link=$(echo "$match" | grep -oP '\((.*?)\)' | tr -d '()')
-            if [[ "$link" == http* ]]; then
-              continue
-            fi
-            if [ ! -f "$link" ] && [ ! -d "$link" ]; then
-              echo "WARNING: Broken link: $link"
-            fi
-          done || echo "Links validated"
-
-      - name: Verify CHANGELOG format
-        run: |
-          if grep -q "## \[" CHANGELOG.md; then
-            echo "CHANGELOG has version sections"
-          else
-            echo "ERROR: CHANGELOG missing version sections"
-            exit 1
-          fi
