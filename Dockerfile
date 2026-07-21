@@ -8,7 +8,7 @@ ENV PYTHONUNBUFFERED=1
 # Install bash tools needed by run-all.sh
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        bash jq gawk curl && \
+        bash jq gawk curl git && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy Docker CLI from official image (avoids docker.io which only provides the daemon)
