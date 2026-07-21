@@ -130,6 +130,61 @@ YAHOO_RATE_LIMIT_CHECK_SYMBOL="${YAHOO_RATE_LIMIT_CHECK_SYMBOL:-AMZN}"
 YAHOO_RATE_LIMIT_FILE=".state/yahoo_rate_limit"
 INVESTBRAIN_CONTAINER="${INVESTBRAIN_CONTAINER:-investbrain-app}"
 
+# Ghostfolio converter image configuration
+# GHOSTFOLIO_CONVERTER_BUILD_FROM_FORK: set to "true" to build image from a forked repo
+# GHOSTFOLIO_FORK_REPO_URL: git URL of the fork to build from
+# GHOSTFOLIO_FORK_BRANCH: branch name to build from the fork
+# GHOSTFOLIO_CONVERTER_IMAGE: Docker image tag used for conversion (default: export-to-ghostfolio:patched)
+GHOSTFOLIO_CONVERTER_BUILD_FROM_FORK="${GHOSTFOLIO_CONVERTER_BUILD_FROM_FORK:-true}"
+GHOSTFOLIO_FORK_REPO_URL="${GHOSTFOLIO_FORK_REPO_URL:-https://github.com/dominatos/Export-To-Ghostfolio.git}"
+GHOSTFOLIO_FORK_BRANCH="${GHOSTFOLIO_FORK_BRANCH:-fix/ghostfolio-v3-compat}"
+GHOSTFOLIO_CONVERTER_IMAGE="${GHOSTFOLIO_CONVERTER_IMAGE:-export-to-ghostfolio:patched}"
+
+# build_converter_image clones (or pulls) the forked Export-To-Ghostfolio repo and builds
+# the Docker image locally so run-all.sh can use it for CSV-to-JSON conversion.
+# When GHOSTFOLIO_CONVERTER_BUILD_FROM_FORK is not "true", this function is a no-op
+# and the pre-existing image (GHOSTFOLIO_CONVERTER_IMAGE) is used as-is.
+build_converter_image() {
+  if [[ "${GHOSTFOLIO_CONVERTER_BUILD_FROM_FORK}" != "true" ]]; then
+    log_debug "Fork build disabled — using existing image: ${GHOSTFOLIO_CONVERTER_IMAGE}"
+    return 0
+  fi
+
+  local clone_dir=".state/ghostfolio-fork"
+  log_info "Building converter image from fork: ${GHOSTFOLIO_FORK_REPO_URL} (${GHOSTFOLIO_FORK_BRANCH})"
+
+  if [[ -d "$clone_dir/.git" ]]; then
+    log_debug "Fork repo already cloned — pulling latest changes..."
+    git -C "$clone_dir" fetch --all --quiet 2>/dev/null || true
+    git -C "$clone_dir" checkout "$GHOSTFOLIO_FORK_BRANCH" --quiet 2>/dev/null || true
+    git -C "$clone_dir" pull --ff-only --quiet 2>/dev/null || {
+      log_warn "Could not pull latest changes — using cached fork state"
+    }
+  else
+    log_debug "Cloning fork repo to ${clone_dir}..."
+    mkdir -p "$(dirname "$clone_dir")"
+    local clone_log
+    clone_log=$(git clone --branch "$GHOSTFOLIO_FORK_BRANCH" --depth 1 \
+      "$GHOSTFOLIO_FORK_REPO_URL" "$clone_dir" 2>&1) || {
+      log_error "Failed to clone fork repo from ${GHOSTFOLIO_FORK_REPO_URL}"
+      log_trace "  git output: $clone_log"
+      return 1
+    }
+    log_trace "  git: $clone_log"
+  fi
+
+  log_info "Building Docker image: ${GHOSTFOLIO_CONVERTER_IMAGE}..."
+  local build_log
+  build_log=$(docker build -t "$GHOSTFOLIO_CONVERTER_IMAGE" "$clone_dir" 2>&1) || {
+    log_error "Docker build failed for fork image"
+    log_trace "  docker output: $build_log"
+    return 1
+  }
+  log_trace "  docker: $build_log"
+
+  log_info "Fork image built successfully: ${GHOSTFOLIO_CONVERTER_IMAGE}"
+}
+
 # yahoo_rate_limit_active checks whether a Yahoo rate-limit marker file exists and its timestamp is still within the configured cooldown; returns 0 when active, 1 otherwise.
 yahoo_rate_limit_active() {
   [[ -f "$YAHOO_RATE_LIMIT_FILE" ]] || return 1
@@ -280,6 +335,14 @@ process_account() {
     fi
 
     if [[ "$platform" == "ghostfolio" ]]; then
+      # Ensure the converter image is available (builds from fork if configured)
+      if ! build_converter_image; then
+        log_error "Failed to prepare converter image — skipping $csv_name"
+        rm -f "temp/$csv_name"
+        had_failure=1
+        continue
+      fi
+
       # Start the Docker-based converter (Auto-detects broker type from CSV contents)
       # Use HOST_SCRIPTS_DIR when running inside Docker (container paths ≠ host paths for socket mounts)
       _mount_base="${HOST_SCRIPTS_DIR:-$SCRIPT_DIR}"
@@ -290,6 +353,7 @@ process_account() {
         -v "${_mount_base}/temp:/var/tmp/e2g-input" \
         -v "${_mount_base}/out:/var/tmp/e2g-output" \
         -v "${_mount_base}/cache:/var/tmp/e2g-cache" \
+        -v "${_mount_base}/isin-mapping.json:/app/isin-mapping.json" \
         --env INPUT_FILE="$csv_name" \
         --env GHOSTFOLIO_ACCOUNT_ID="$account_id" \
         --env GHOSTFOLIO_VALIDATE="${GHOSTFOLIO_VALIDATE:-true}" \
@@ -299,7 +363,7 @@ process_account() {
         --env GHOSTFOLIO_SECRET="$GHOSTFOLIO_SECRET" \
         --env NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=4000}" \
         --add-host=host.docker.internal:host-gateway \
-        dickwolff/export-to-ghostfolio 2>&1 | tee .state/docker_output.log
+        "$GHOSTFOLIO_CONVERTER_IMAGE" 2>&1 | tee .state/docker_output.log
       docker_rc=${PIPESTATUS[0]}
       set -e -o pipefail
 

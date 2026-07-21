@@ -223,6 +223,14 @@ INVESTBRAIN_CONTAINER=investbrain-app # Docker container name for Investbrain
 YAHOO_RATE_LIMIT_COOLDOWN_SECONDS=300
 YAHOO_RATE_LIMIT_CHECK_SYMBOL=AMZN
 
+# --- Ghostfolio Converter Image ---
+# By default, the converter image is built from the fork (dominatos/Export-To-Ghostfolio).
+# Set GHOSTFOLIO_CONVERTER_BUILD_FROM_FORK=false to use the original Docker Hub image instead.
+# GHOSTFOLIO_CONVERTER_BUILD_FROM_FORK=true
+# GHOSTFOLIO_FORK_REPO_URL=https://github.com/dominatos/Export-To-Ghostfolio.git
+# GHOSTFOLIO_FORK_BRANCH=fix/ghostfolio-v3-compat
+# GHOSTFOLIO_CONVERTER_IMAGE=export-to-ghostfolio:patched
+
 # Manual Yahoo rate-limit check
 # Use this command to verify whether Yahoo Finance is currently rate limiting price lookups:
 # curl -sS -m 10 "https://query1.finance.yahoo.com/v7/finance/quote?symbols=AMZN"
@@ -317,6 +325,8 @@ Run these from the repository root:
 
 ```bash
 python3 -m py_compile t212_fetch.py
+python3 -m py_compile investbrain_import.py
+python3 -m py_compile preprocess_isin.py
 bash -n run-all.sh
 python3 -m unittest tests/test_t212_fetch.py -v
 python3 -m unittest tests/test_investbrain_import.py -v
