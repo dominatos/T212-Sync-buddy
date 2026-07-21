@@ -8,6 +8,7 @@ cd "$SCRIPT_DIR" || exit 1
 # Load environment variables from .env file and export them
 if [ -f .env ]; then
   set -a
+  # shellcheck source=/dev/null
   source .env
   set +a
 fi
