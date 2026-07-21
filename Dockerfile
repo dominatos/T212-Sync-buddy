@@ -1,5 +1,5 @@
 # Stage 1: Get Docker CLI from official image
-FROM docker:27-cli AS docker-cli
+FROM docker:29-cli AS docker-cli
 
 # Stage 2: Build the fetcher image
 FROM python:3.12-slim
