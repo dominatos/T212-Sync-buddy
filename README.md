@@ -74,7 +74,7 @@ The core Python script for automated transaction retrieval from Trading 212 via 
 The universal orchestrator for processing CSV exports.
 - **Account Discovery**: Automatically finds all `PREFIX_*` accounts in `.env`.
 - **Platform Handoff**: 
-  - **Ghostfolio**: Launches the `dickwolff/export-to-ghostfolio` container.
+  - **Ghostfolio**: Launches the `export-to-ghostfolio` converter container (built from the updated fork).
   - **Investbrain**: Specifically optimized for accurate cost-basis and dividend reporting.
 - **Dry-Run Integrity**: Safely skips archiving CSVs if `GHOSTFOLIO_IMPORT` or `INVESTBRAIN_IMPORT` are set to `false`, allowing non-destructive validation passes.
 - **Smart Data Enrichment (Investbrain)**:
@@ -516,7 +516,9 @@ T212_LOG_LEVEL=TRACE python3 t212_fetch.py
 
 ## Acknowledgments
 
-This project stands on the shoulders of [dickwolff/Export-To-Ghostfolio](https://github.com/dickwolff/Export-To-Ghostfolio), whose CSV-to-JSON engine powers the Ghostfolio conversion layer. Everything else — Trading212 API extraction, multi-account orchestration, data normalization, scheduling, and the complete Investbrain integration pipeline — is developed and maintained here.
+This project stands on the shoulders of [dickwolff/Export-To-Ghostfolio](https://github.com/dickwolff/Export-To-Ghostfolio), whose CSV-to-JSON engine powers the Ghostfolio conversion layer. 
+
+**Note on Fork usage:** This project uses a custom fork ([dominatos/Export-To-Ghostfolio](https://github.com/dominatos/Export-To-Ghostfolio)) by default because the original repository is no longer updated to accommodate recent changes in the Ghostfolio API. Everything else — Trading212 API extraction, multi-account orchestration, data normalization, scheduling, and the complete Investbrain integration pipeline — is developed and maintained here.
 
 
 If you like this project, consider supporting me:
