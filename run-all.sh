@@ -8,6 +8,7 @@ cd "$SCRIPT_DIR" || exit 1
 # Load environment variables from .env file and export them
 if [ -f .env ]; then
   set -a
+  # shellcheck source=/dev/null
   source .env
   set +a
 fi
@@ -42,7 +43,7 @@ log_fatal() { echo "[FATAL] $*"; }
 # countdown_sleep pauses execution for the given number of seconds and, when the log level is TRACE, prints a per-second "Sleeping Ns..." countdown to stdout.
 countdown_sleep() {
     local seconds=$1
-    while [ $seconds -gt 0 ]; do
+    while [ "$seconds" -gt 0 ]; do
         [[ $_CURRENT_LEVEL -le 0 ]] && echo -ne "\rSleeping ${seconds}s... "
         sleep 1
         seconds=$((seconds - 1))
@@ -129,6 +130,61 @@ YAHOO_RATE_LIMIT_COOLDOWN_SECONDS="${YAHOO_RATE_LIMIT_COOLDOWN_SECONDS:-300}"
 YAHOO_RATE_LIMIT_CHECK_SYMBOL="${YAHOO_RATE_LIMIT_CHECK_SYMBOL:-AMZN}"
 YAHOO_RATE_LIMIT_FILE=".state/yahoo_rate_limit"
 INVESTBRAIN_CONTAINER="${INVESTBRAIN_CONTAINER:-investbrain-app}"
+
+# Ghostfolio converter image configuration
+# GHOSTFOLIO_CONVERTER_BUILD_FROM_FORK: set to "true" to build image from a forked repo
+# GHOSTFOLIO_FORK_REPO_URL: git URL of the fork to build from
+# GHOSTFOLIO_FORK_BRANCH: branch name to build from the fork
+# GHOSTFOLIO_CONVERTER_IMAGE: Docker image tag used for conversion (default: export-to-ghostfolio:patched)
+GHOSTFOLIO_CONVERTER_BUILD_FROM_FORK="${GHOSTFOLIO_CONVERTER_BUILD_FROM_FORK:-true}"
+GHOSTFOLIO_FORK_REPO_URL="${GHOSTFOLIO_FORK_REPO_URL:-https://github.com/dominatos/Export-To-Ghostfolio.git}"
+GHOSTFOLIO_FORK_BRANCH="${GHOSTFOLIO_FORK_BRANCH:-fix/ghostfolio-v3-compat}"
+GHOSTFOLIO_CONVERTER_IMAGE="${GHOSTFOLIO_CONVERTER_IMAGE:-export-to-ghostfolio:patched}"
+
+# build_converter_image clones (or pulls) the forked Export-To-Ghostfolio repo and builds
+# the Docker image locally so run-all.sh can use it for CSV-to-JSON conversion.
+# When GHOSTFOLIO_CONVERTER_BUILD_FROM_FORK is not "true", this function is a no-op
+# and the pre-existing image (GHOSTFOLIO_CONVERTER_IMAGE) is used as-is.
+build_converter_image() {
+  if [[ "${GHOSTFOLIO_CONVERTER_BUILD_FROM_FORK}" != "true" ]]; then
+    log_debug "Fork build disabled — using existing image: ${GHOSTFOLIO_CONVERTER_IMAGE}"
+    return 0
+  fi
+
+  local clone_dir=".state/ghostfolio-fork"
+  log_info "Building converter image from fork: ${GHOSTFOLIO_FORK_REPO_URL} (${GHOSTFOLIO_FORK_BRANCH})"
+
+  if [[ -d "$clone_dir/.git" ]]; then
+    log_debug "Fork repo already cloned — pulling latest changes..."
+    git -C "$clone_dir" fetch --all --quiet 2>/dev/null || true
+    git -C "$clone_dir" checkout "$GHOSTFOLIO_FORK_BRANCH" --quiet 2>/dev/null || true
+    git -C "$clone_dir" pull --ff-only --quiet 2>/dev/null || {
+      log_warn "Could not pull latest changes — using cached fork state"
+    }
+  else
+    log_debug "Cloning fork repo to ${clone_dir}..."
+    mkdir -p "$(dirname "$clone_dir")"
+    local clone_log
+    clone_log=$(git clone --branch "$GHOSTFOLIO_FORK_BRANCH" --depth 1 \
+      "$GHOSTFOLIO_FORK_REPO_URL" "$clone_dir" 2>&1) || {
+      log_error "Failed to clone fork repo from ${GHOSTFOLIO_FORK_REPO_URL}"
+      log_trace "  git output: $clone_log"
+      return 1
+    }
+    log_trace "  git: $clone_log"
+  fi
+
+  log_info "Building Docker image: ${GHOSTFOLIO_CONVERTER_IMAGE}..."
+  local build_log
+  build_log=$(docker build -t "$GHOSTFOLIO_CONVERTER_IMAGE" "$clone_dir" 2>&1) || {
+    log_error "Docker build failed for fork image"
+    log_trace "  docker output: $build_log"
+    return 1
+  }
+  log_trace "  docker: $build_log"
+
+  log_info "Fork image built successfully: ${GHOSTFOLIO_CONVERTER_IMAGE}"
+}
 
 # yahoo_rate_limit_active checks whether a Yahoo rate-limit marker file exists and its timestamp is still within the configured cooldown; returns 0 when active, 1 otherwise.
 yahoo_rate_limit_active() {
@@ -280,6 +336,14 @@ process_account() {
     fi
 
     if [[ "$platform" == "ghostfolio" ]]; then
+      # Ensure the converter image is available (builds from fork if configured)
+      if ! build_converter_image; then
+        log_error "Failed to prepare converter image — skipping $csv_name"
+        rm -f "temp/$csv_name"
+        had_failure=1
+        continue
+      fi
+
       # Start the Docker-based converter (Auto-detects broker type from CSV contents)
       # Use HOST_SCRIPTS_DIR when running inside Docker (container paths ≠ host paths for socket mounts)
       _mount_base="${HOST_SCRIPTS_DIR:-$SCRIPT_DIR}"
@@ -290,6 +354,7 @@ process_account() {
         -v "${_mount_base}/temp:/var/tmp/e2g-input" \
         -v "${_mount_base}/out:/var/tmp/e2g-output" \
         -v "${_mount_base}/cache:/var/tmp/e2g-cache" \
+        -v "${_mount_base}/isin-mapping.json:/app/isin-mapping.json" \
         --env INPUT_FILE="$csv_name" \
         --env GHOSTFOLIO_ACCOUNT_ID="$account_id" \
         --env GHOSTFOLIO_VALIDATE="${GHOSTFOLIO_VALIDATE:-true}" \
@@ -299,7 +364,7 @@ process_account() {
         --env GHOSTFOLIO_SECRET="$GHOSTFOLIO_SECRET" \
         --env NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=4000}" \
         --add-host=host.docker.internal:host-gateway \
-        dickwolff/export-to-ghostfolio 2>&1 | tee .state/docker_output.log
+        "$GHOSTFOLIO_CONVERTER_IMAGE" 2>&1 | tee .state/docker_output.log
       docker_rc=${PIPESTATUS[0]}
       set -e -o pipefail
 
@@ -348,6 +413,16 @@ process_account() {
       done
       log_info "✅ Success: ${#json_files[@]} JSON file(s) for $csv_name ($total_count activities imported)"
 
+      # Dry-run guard: if import was not actually executed, do NOT archive the CSV.
+      # The source file must remain in input/ so that the next real run
+      # (with GHOSTFOLIO_IMPORT=true) still picks it up, and t212_fetch.py
+      # will not persist last_fetch for an unimported CSV.
+      if [[ "${GHOSTFOLIO_IMPORT:-true}" != "true" ]]; then
+        log_warn "⚠️  Import was skipped (GHOSTFOLIO_IMPORT=${GHOSTFOLIO_IMPORT:-true}). CSV will NOT be archived; run again with GHOSTFOLIO_IMPORT=true to complete the import."
+        rm -f "temp/$csv_name"
+        continue
+      fi
+
     elif [[ "$platform" == "investbrain" ]]; then
       # Investbrain import using Python script
       validate_only="${INVESTBRAIN_VALIDATE:-true}"
@@ -361,7 +436,7 @@ process_account() {
       log_trace "  INVESTBRAIN_URL: $INVESTBRAIN_URL"
       log_trace "  INVESTBRAIN_API_TOKEN: ***"
       log_trace "  Current working directory: $(pwd)"
-      log_trace "  Files in current dir: $(ls -la investbrain_import.py | head -1)"
+      log_trace "  Files in current dir: $(stat -c '%A %s %n' investbrain_import.py 2>/dev/null || echo 'investbrain_import.py not found')"
 
       if [[ "$validate_only" == "true" ]]; then
         log_info "🔍 Validating CSV for Investbrain import..."
@@ -396,6 +471,16 @@ process_account() {
         }
         log_info "✅ Import successful"
         investbrain_any_success=1
+      fi
+
+      # Dry-run guard: if import was not actually executed, do NOT write a success
+      # marker or archive the CSV. The source file must remain in input/ so that the
+      # next real run (with INVESTBRAIN_IMPORT=true) still picks it up, and
+      # t212_fetch.py will not persist last_fetch for an unimported CSV.
+      if [[ "$import_flag" != "true" ]]; then
+        log_warn "⚠️  Import was skipped (INVESTBRAIN_IMPORT=$import_flag). CSV will NOT be archived; run again with INVESTBRAIN_IMPORT=true to complete the import."
+        rm -f "temp/$csv_name"
+        continue
       fi
 
       # Create a simple success marker for Investbrain (no JSON files)

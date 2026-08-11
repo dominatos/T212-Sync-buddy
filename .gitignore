@@ -1,30 +1,36 @@
-INSTRUCTIONS.md
+/INSTRUCTIONS.md
 tofix.md
 .env
 post.md
 tests/temp/differenace-in-balance.md
 
+/log/
+/prompt.txt
+**/__pycache__/
 
-log
-prompt.txt
-*__pycache__*
+/logs.txt
+/history.txt
+/.codex
+/issue.md
+/testinvestbrain-issue/
+/.state/
+/input/
+/out/
+/temp/
+/dump.json
+/helper-temp-scripts/
+/review.md
+/testing-command.sh
+/logs-1st-run.txt
+/testing-command-copy.sh
+/investbrain-arch/
+/restricted/
+/.coderabbit copy.yaml
 
-logs.txt
-history.txt
-.codex
-issue.md
-testinvestbrain-issue/
-.state/
-input/
-out/
-temp/
-dump.json
-helper-temp-scripts/
-review.md
-testing-command.sh
-logs-1st-run.txt
-testing-command-copy.sh
-investbrain-arch
-restricted
-.coderabbit copy.yaml
-tests/__pycache__/*
+# AI Code Review temporary files
+/.ai-code-review/
+testit.sh
+
+testing-command-new.sh
+testing-command.sh-disable
+

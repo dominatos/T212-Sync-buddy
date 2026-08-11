@@ -5,5 +5,10 @@
   "CHF": ".SW",
   "CAD": ".TO",
   "AUD": ".AX",
-  "JPY": ".T"
+  "JPY": ".T",
+  "DKK": ".CO",
+  "SEK": ".ST",
+  "NOK": ".OL",
+  "HKD": ".HK",
+  "SGD": ".SI"
 }

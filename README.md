@@ -47,6 +47,9 @@ Your final directory structure should look like this:
 ├── preprocess_isin.py       # Optional preprocessing for broker tickers before Ghostfolio conversion
 ├── Dockerfile               # Container image for the fetcher workflow
 ├── docker-compose.yml       # Containerized runner with Docker socket passthrough
+├── isin-mapping.json        # Optional: explicit ISIN-to-Ticker symbol overrides for Investbrain
+├── currency-suffixes.json   # Exchange suffix rules for dynamic Yahoo Finance symbol mapping
+├── requirements.txt         # Python runtime dependencies
 ├── tests/                   # Python and BATS test suite
 ├── systemdunits/            # Services and timers for automation
 └── README.md                # This guide
@@ -62,7 +65,7 @@ Your final directory structure should look like this:
 The core Python script for automated transaction retrieval from Trading 212 via API.
 - **Bootstrapping**: On the first run, it detects your earliest transaction date and performs a full history fetch.
 - **Incremental Updates**: Subsequent runs only fetch activity from the last 7 days.
-- **Rate Limit Handling**: Automatically pauses and resumes to respect Trading 212 API limits.
+- **Rate Limit & Bug Handling**: Automatically pauses to respect API rate limits and gracefully handles known Trading 212 pagination bugs (e.g., random 404 errors) to preserve partial data.
 - **Data Normalization**: Cleans and fixes T212 CSV structure (pads missing columns) for reliable conversion.
 - **Flow**: After fetching, it automatically triggers `run-all.sh`.
 
@@ -71,8 +74,9 @@ The core Python script for automated transaction retrieval from Trading 212 via 
 The universal orchestrator for processing CSV exports.
 - **Account Discovery**: Automatically finds all `PREFIX_*` accounts in `.env`.
 - **Platform Handoff**: 
-  - **Ghostfolio**: Launches the `dickwolff/export-to-ghostfolio` container.
+  - **Ghostfolio**: Launches the `export-to-ghostfolio` converter container (built from the updated fork).
   - **Investbrain**: Specifically optimized for accurate cost-basis and dividend reporting.
+- **Dry-Run Integrity**: Safely skips archiving CSVs if `GHOSTFOLIO_IMPORT` or `INVESTBRAIN_IMPORT` are set to `false`, allowing non-destructive validation passes.
 - **Smart Data Enrichment (Investbrain)**:
   - Automatically triggers `refresh:currency-data` before import to ensure accurate FX conversions.
   - Triggers `refresh:market-data` and `refresh:dividend-data` after import for instant portfolio updates.
@@ -83,8 +87,8 @@ The universal orchestrator for processing CSV exports.
 
 A sophisticated importer designed to handle Investbrain-specific edge cases:
 - **Intraday Workaround**: Automatically detects same-day trade conflicts and implements a sequential delay/shifting logic to bypass Investbrain validation bugs ([#195](https://github.com/investbrainapp/investbrain/issues/195)).
-- **Symbol Mapping**: Auto-appends exchange suffixes (`.DE`, `.L`) to ensure compatibility with Yahoo Finance.
-- **Error Handling**: Detailed reporting of HTTP 422 validation errors.
+- **Symbol Mapping**: Configurable via `isin-mapping.json` for explicit ISIN-to-Ticker rules, and uses `currency-suffixes.json` to dynamically auto-append exchange suffixes (like `.DE` or `.L`) for Yahoo Finance compatibility.
+- **Error Handling & Autodetection**: Detailed reporting of HTTP 422 validation errors, with an automatic fallback mechanism that attempts to resolve invalid symbols by applying currency-appropriate suffixes on the fly.
 
 ### systemdunits/t212-sync-buddy.service
 
@@ -173,6 +177,11 @@ nano .env
 Add your Trading212 API credentials and Ghostfolio settings. For security, it is highly recommended to create API keys with "Read-only" permissions where possible.
 
 ```ini
+# --- Path & Advanced Configuration (Optional) ---
+# T212_ENV_FILE=/custom/path/to/.env              # Override .env location (default: ./.env)
+# T212_DATA_DIR=/custom/path/to/data              # Override data directory (default: ./)
+# T212_DEMO=false                                 # Set to "true" to use the T212 practice environment
+
 # --- Trading212 API Keys ---
 # Format: PREFIX_API_KEY and PREFIX_API_SECRET. For security, it is highly recommended to create API keys with "Read-only" permissions.
 PREFIX1_API_KEY=your_prefix1_api_key_here
@@ -213,6 +222,14 @@ INVESTBRAIN_CONTAINER=investbrain-app # Docker container name for Investbrain
 # Cooldown state is stored in .state/yahoo_rate_limit.
 YAHOO_RATE_LIMIT_COOLDOWN_SECONDS=300
 YAHOO_RATE_LIMIT_CHECK_SYMBOL=AMZN
+
+# --- Ghostfolio Converter Image ---
+# By default, the converter image is built from the fork (dominatos/Export-To-Ghostfolio).
+# Set GHOSTFOLIO_CONVERTER_BUILD_FROM_FORK=false to use the original Docker Hub image instead.
+# GHOSTFOLIO_CONVERTER_BUILD_FROM_FORK=true
+# GHOSTFOLIO_FORK_REPO_URL=https://github.com/dominatos/Export-To-Ghostfolio.git
+# GHOSTFOLIO_FORK_BRANCH=fix/ghostfolio-v3-compat
+# GHOSTFOLIO_CONVERTER_IMAGE=export-to-ghostfolio:patched
 
 # Manual Yahoo rate-limit check
 # Use this command to verify whether Yahoo Finance is currently rate limiting price lookups:
@@ -308,6 +325,8 @@ Run these from the repository root:
 
 ```bash
 python3 -m py_compile t212_fetch.py
+python3 -m py_compile investbrain_import.py
+python3 -m py_compile preprocess_isin.py
 bash -n run-all.sh
 python3 -m unittest tests/test_t212_fetch.py -v
 python3 -m unittest tests/test_investbrain_import.py -v
@@ -481,6 +500,8 @@ T212_LOG_LEVEL=TRACE python3 t212_fetch.py
 | :--- | :--- |
 | `No accounts found in .env` | Ensure your `.env` variables use the correct `PREFIX_API_KEY` format. |
 | `429 Too Many Requests` | Trading212 rate limits are retried automatically. Yahoo rate limits cause Ghostfolio conversion to be skipped until the cooldown in `.state/yahoo_rate_limit` expires. |
+| `404 Not Found (Pagination)` | This is a known Trading212 API bug. The script will safely catch it, emit a warning, and process the partial data it has collected so far. |
+| `422 Unprocessable Entity` | Investbrain validation error. The script attempts to auto-fix this by applying currency suffixes (e.g. `.L` for GBP), or requires manual mapping in `isin-mapping.json`. |
 | `Invalid Record Length` | Handled automatically by the script's normalization logic. |
 | `❌ JSON not found` | Check if Docker is running properly: `sudo systemctl status docker`. |
 | Timer not running | Inspect logs for path or permission errors: `journalctl -u t212-sync-buddy.service`. |
@@ -495,8 +516,9 @@ T212_LOG_LEVEL=TRACE python3 t212_fetch.py
 
 ## Acknowledgments
 
-This robust automation and synchronization pipeline is powered by the excellent CSV-to-JSON parsing engine provided by [dickwolff/Export-To-Ghostfolio](https://github.com/dickwolff/Export-To-Ghostfolio). Data extraction via API, orchestration, normalization, and scheduling are maintained within this project.
+This project stands on the shoulders of [dickwolff/Export-To-Ghostfolio](https://github.com/dickwolff/Export-To-Ghostfolio), whose CSV-to-JSON engine powers the Ghostfolio conversion layer. 
 
+**Note on Fork usage:** This project uses a custom fork ([dominatos/Export-To-Ghostfolio](https://github.com/dominatos/Export-To-Ghostfolio)) by default because the original repository is no longer updated to accommodate recent changes in the Ghostfolio API. Everything else — Trading212 API extraction, multi-account orchestration, data normalization, scheduling, and the complete Investbrain integration pipeline — is developed and maintained here.
 
 
 If you like this project, consider supporting me:
