@@ -4,7 +4,6 @@ tofix.md
 post.md
 tests/temp/differenace-in-balance.md
 
-
 /log/
 /prompt.txt
 **/__pycache__/
@@ -28,10 +27,10 @@ tests/temp/differenace-in-balance.md
 /restricted/
 /.coderabbit copy.yaml
 
-
 # AI Code Review temporary files
 /.ai-code-review/
 testit.sh
 
 testing-command-new.sh
 testing-command.sh-disable
+
