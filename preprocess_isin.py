@@ -73,30 +73,45 @@ TICKER_TO_ISIN = {v: k for k, v in ISIN_TO_TICKER.items()}
 PROBLEM_SUFFIXES = {'.L', '.XC'}
 REMAPPED_SYMBOLS = {'VEVEL.XC', 'VWRLL.XC'}
 
-def fetch_yahoo_ticker(isin: str) -> str:
-    """Query Yahoo Finance Search API for the ISIN."""
-    url = f"https://query2.finance.yahoo.com/v1/finance/search?q={isin}"
-    req = urllib.request.Request(
-        url, 
-        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-    )
-    try:
-        # timeout=10 prevents indefinite blocking on network stalls
-        with urllib.request.urlopen(req, timeout=10) as response:
-            data = json.loads(response.read().decode())
-            quotes = data.get("quotes", [])
-            if quotes:
-                return quotes[0].get("symbol")
-    except socket.timeout:
-        logging.error(f"Timeout (10s) fetching ISIN {isin} from {url}")
-    except urllib.error.HTTPError as e:
-        logging.exception(f"HTTPError fetching ISIN {isin} from {url}. Status: {e.code}, Reason: {e.reason}")
-    except urllib.error.URLError as e:
-        logging.error(f"URLError fetching ISIN {isin} from {url}: {e.reason}")
-    except json.JSONDecodeError as e:
-        logging.exception(f"JSONDecodeError parsing response for ISIN {isin} from {url}")
-    except Exception as e:
-        logging.exception(f"Unexpected error fetching ISIN {isin} from {url}")
+def fetch_yahoo_ticker(isin: str, ticker: str, currency: str) -> str:
+    """Query Yahoo Finance Search API for the ISIN with smart fallback."""
+    def search_yahoo(query):
+        url = f"https://query2.finance.yahoo.com/v1/finance/search?q={query}"
+        req = urllib.request.Request(
+            url, 
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as response:
+                data = json.loads(response.read().decode())
+                return data.get("quotes", [])
+        except Exception as e:
+            logging.error(f"Error fetching {query}: {e}")
+            return []
+
+    EUR_SUFFIXES = ['.DE', '.AS', '.PA', '.MI', '.MC']
+    
+    isin_quotes = search_yahoo(isin)
+    if isin_quotes:
+        for q in isin_quotes:
+            sym = q.get("symbol", "")
+            if currency == "EUR":
+                if any(sym.endswith(s) for s in EUR_SUFFIXES):
+                    return sym
+            else:
+                return sym
+                
+    if ticker and currency == "EUR":
+        ticker_quotes = search_yahoo(ticker)
+        if ticker_quotes:
+            for q in ticker_quotes:
+                sym = q.get("symbol", "")
+                if any(sym.endswith(s) for s in EUR_SUFFIXES) and sym.startswith(ticker):
+                    return sym
+                    
+    if isin_quotes:
+        return isin_quotes[0].get("symbol")
+        
     return None
 
 def process_csv(input_file: str, output_file: str) -> tuple[int, bool]:
@@ -131,7 +146,7 @@ def process_csv(input_file: str, output_file: str) -> tuple[int, bool]:
             if isin and isin not in ISIN_TO_TICKER:
                 print(f"  🔍 Unmapped ISIN {isin}. Querying Yahoo Finance API...")
                 time.sleep(0.5)  # Be gentle to Yahoo API
-                fetched_ticker = fetch_yahoo_ticker(isin)
+                fetched_ticker = fetch_yahoo_ticker(isin, ticker, currency)
                 if fetched_ticker:
                     print(f"  ✅ Auto-mapped {isin} -> {fetched_ticker}")
                     ISIN_TO_TICKER[isin] = fetched_ticker

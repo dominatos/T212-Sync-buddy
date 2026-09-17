@@ -545,6 +545,8 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                 #   - Retries exhausted: count as error, continue to next transaction
                 #     (one failed POST should not block the rest of the import).
                 max_post_retries = 3
+                if transaction.get('currency', '') == 'EUR':
+                    max_post_retries = 5
                 post_backoff_base = 2.0
                 url = f"{api_url.rstrip('/')}/api/transaction"
                 post_last_error = None
@@ -588,22 +590,51 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                                     curr = transaction.get('currency', '')
                                     fallback_suffix = CURRENCY_SUFFIXES.get(curr)
                                     
-                                    # If it failed without a suffix, try appending the currency's default suffix
-                                    if fallback_suffix and fallback_suffix not in sym and curr != 'EUR' and post_attempt < max_post_retries:
-                                        warn(f"💡 AUTODETECT: Symbol '{sym}' invalid. Automatically retrying with '{sym}{fallback_suffix}' fallback...")
-                                        transaction['symbol'] = f"{sym}{fallback_suffix}"
-                                        prev_symbol = transaction['symbol']
-                                        # Recompute fingerprint using the updated symbol so any later duplicate
-                                        # check in this row uses the corrected symbol (e.g. "DHER.DE") rather than
-                                        # the stale original ("DHER"). Uses the same 4-field formula as above.
-                                        fingerprint = (transaction['symbol'], tx_type, date, qty_fingerprint)
-                                        if existing_fingerprints.get(fingerprint, 0) > 0:
-                                            info(f"⏭️ Skipping duplicate: {transaction['symbol']} {tx_type} {transaction.get('quantity')} on {date}")
-                                            existing_fingerprints[fingerprint] -= 1
-                                            dedup_skipped_count += 1
-                                            post_handled = True
-                                            break
-                                        continue  # Retry with the modified symbol
+                                    if curr == 'EUR':
+                                        EUR_SUFFIXES = ['.DE', '.AS', '.PA', '.MI', '.MC']
+                                        current_suffix = next((s for s in EUR_SUFFIXES if sym.endswith(s)), None)
+                                        if current_suffix is None:
+                                            next_suffix = EUR_SUFFIXES[0]
+                                            base_sym = sym
+                                        else:
+                                            idx = EUR_SUFFIXES.index(current_suffix)
+                                            if idx + 1 < len(EUR_SUFFIXES):
+                                                next_suffix = EUR_SUFFIXES[idx + 1]
+                                                base_sym = sym[:-len(current_suffix)]
+                                            else:
+                                                next_suffix = None
+                                                base_sym = sym
+                                                
+                                        if next_suffix and post_attempt < max_post_retries:
+                                            warn(f"💡 AUTODETECT: Symbol '{sym}' invalid. Automatically retrying with '{base_sym}{next_suffix}' fallback...")
+                                            transaction['symbol'] = f"{base_sym}{next_suffix}"
+                                            prev_symbol = transaction['symbol']
+                                            
+                                            fingerprint = (transaction['symbol'], tx_type, date, qty_fingerprint)
+                                            if existing_fingerprints.get(fingerprint, 0) > 0:
+                                                info(f"⏭️ Skipping duplicate: {transaction['symbol']} {tx_type} {transaction.get('quantity')} on {date}")
+                                                existing_fingerprints[fingerprint] -= 1
+                                                dedup_skipped_count += 1
+                                                post_handled = True
+                                                break
+                                            continue
+                                    else:
+                                        # If it failed without a suffix, try appending the currency's default suffix
+                                        if fallback_suffix and fallback_suffix not in sym and post_attempt < max_post_retries:
+                                            warn(f"💡 AUTODETECT: Symbol '{sym}' invalid. Automatically retrying with '{sym}{fallback_suffix}' fallback...")
+                                            transaction['symbol'] = f"{sym}{fallback_suffix}"
+                                            prev_symbol = transaction['symbol']
+                                            # Recompute fingerprint using the updated symbol so any later duplicate
+                                            # check in this row uses the corrected symbol (e.g. "DHER.DE") rather than
+                                            # the stale original ("DHER"). Uses the same 4-field formula as above.
+                                            fingerprint = (transaction['symbol'], tx_type, date, qty_fingerprint)
+                                            if existing_fingerprints.get(fingerprint, 0) > 0:
+                                                info(f"⏭️ Skipping duplicate: {transaction['symbol']} {tx_type} {transaction.get('quantity')} on {date}")
+                                                existing_fingerprints[fingerprint] -= 1
+                                                dedup_skipped_count += 1
+                                                post_handled = True
+                                                break
+                                            continue  # Retry with the modified symbol
                                         
                                     error(f"Failed to import row {row_num}: HTTP {response.status_code} - {response.text}")
                                     warn(f"💡 ACTION REQUIRED: Symbol '{sym}' is invalid on Yahoo Finance.")
