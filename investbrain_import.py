@@ -412,7 +412,7 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
     """
     Import Trading212 transactions from a CSV file into the Investbrain portfolio.
     
-    Parses the CSV, normalizes and deduplicates transactions, applies the intraday BUY->D-1 workaround when needed, and posts each transaction to the Investbrain `/api/transaction` endpoint (unless `validate_only` is True, in which case imports are simulated and not sent).
+    Parses the CSV, normalizes and deduplicates transactions, applies the intraday BUY->D-1 workaround when needed, and posts each transaction to the Investbrain `/api/transaction` endpoint (unless `validate_only` is True, in which case imports are simulated and not sent). When a 422 response indicates that a provided EUR symbol is invalid, retries the transaction with supported European exchange suffixes in sequence.
     
     Parameters:
         csv_path (str): Path to the Trading212 CSV file.

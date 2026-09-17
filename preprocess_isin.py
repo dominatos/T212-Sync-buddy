@@ -74,8 +74,16 @@ PROBLEM_SUFFIXES = {'.L', '.XC'}
 REMAPPED_SYMBOLS = {'VEVEL.XC', 'VWRLL.XC'}
 
 def fetch_yahoo_ticker(isin: str, ticker: str, currency: str) -> str:
-    """Query Yahoo Finance Search API for the ISIN with smart fallback."""
+    """
+    Resolve an ISIN to a Yahoo Finance symbol, preferring EUR listings when applicable.
+
+    EUR lookups prefer ISIN results ending in `.DE`, `.AS`, `.PA`, `.MI`, or `.MC`,
+    then search by ticker for such a listing before falling back to the first ISIN
+    result. Other currencies use the first ISIN result. Returns None if no search
+    produces a symbol.
+    """
     def search_yahoo(query):
+        """Return matching Yahoo Finance quotes, treating request errors as no matches."""
         url = f"https://query2.finance.yahoo.com/v1/finance/search?q={query}"
         req = urllib.request.Request(
             url, 
@@ -118,7 +126,10 @@ def process_csv(input_file: str, output_file: str) -> tuple[int, bool]:
     """
     Map tickers in a Trading212 export CSV to Yahoo Finance symbols and write the transformed rows to the specified output CSV.
     
-    Processes each row in input_file: if an ISIN is present and mapped in `ISIN_TO_TICKER`, replaces the `Ticker` with the mapped symbol; otherwise, when the ticker lacks a dot, appends an exchange suffix based on the row currency (e.g., GBP→.L, CHF→.SW, CAD→.TO, AUD→.AX, JPY→.T). EUR is intentionally left unsuffixed. Rows with an empty `Ticker` are written unchanged.
+    For an unmapped ISIN, queries Yahoo Finance and adds any resolved symbol to the
+    in-memory `ISIN_TO_TICKER` mapping. Applies explicit ISIN mappings before adding a
+    currency-specific suffix to eligible unmapped, non-EUR tickers. Rows with an empty
+    ticker are written unchanged unless their ISIN can be resolved.
     
     Parameters:
         input_file (str): Path to the input CSV file to read.
