@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./assets/readme/hero.svg" width="100%" alt="T212-Sync-buddy: Automated Trading 212 to Ghostfolio/Investbrain Sync">
+</p>
+
 # T212-Sync-buddy: Automated Trading 212 to Ghostfolio/Investbrain Sync
 
 **T212-Sync-buddy** is a fully automated synchronization pipeline designed to safely extract your transaction history from the Trading 212 API and seamlessly import it into your Ghostfolio instance or Investbrain portfolio.
@@ -28,6 +32,10 @@ If you like this project, consider supporting me:
 
 ---
 ---
+
+<p align="center">
+  <img src="./assets/readme/workflow.svg" width="100%" alt="Workflow diagram: T212 -> Sync Buddy -> Destination Platforms">
+</p>
 
 ## 1. Project Structure
 
@@ -102,6 +110,10 @@ A systemd timer that controls *when* the sync runs. In the current repository, i
 
 ---
 
+<p align="center">
+  <img src="./assets/readme/section-setup.svg" width="100%" alt="Setup section">
+</p>
+
 ## 3. Setup — Choose Your Method
 
 <details>
@@ -164,6 +176,10 @@ docker compose run --rm t212-sync-buddy
 </details>
 
 ---
+
+<p align="center">
+  <img src="./assets/readme/section-configuration.svg" width="100%" alt="Configuration section">
+</p>
 
 <details>
 <summary><h2>4. Configure Credentials</h2></summary>
@@ -399,6 +415,10 @@ If you use the Docker Compose setup (Section 3, Option B), use these systemd uni
 
 ---
 
+<p align="center">
+  <img src="./assets/readme/section-monitoring.svg" width="100%" alt="Monitoring section">
+</p>
+
 ## 9. Monitoring and Maintenance
 
 <details>
@@ -518,7 +538,7 @@ T212_LOG_LEVEL=TRACE python3 t212_fetch.py
 
 This project stands on the shoulders of [dickwolff/Export-To-Ghostfolio](https://github.com/dickwolff/Export-To-Ghostfolio), whose CSV-to-JSON engine powers the Ghostfolio conversion layer. 
 
-**Note on Fork usage:** This project uses a custom fork ([dominatos/Export-To-Ghostfolio](https://github.com/dominatos/Export-To-Ghostfolio)) by default because the original repository is no longer updated to accommodate recent changes in the Ghostfolio API. Everything else — Trading212 API extraction, multi-account orchestration, data normalization, scheduling, and the complete Investbrain integration pipeline — is developed and maintained here.
+**Note on Fork usage:** This project uses a custom fork ([dominatos/Export-To-Ghostfolio](https://github.com/dominatos/Export-To-Ghostfolio)) by default because the original repository is no longer updated to accommodate recent changes in the Ghostfolio API. The fork automatically detects the Ghostfolio version at runtime — it tries the v3+ authentication method (POST) first, and transparently falls back to the pre-v3 method (GET) if needed. This means the fork works with both current and older Ghostfolio instances without any configuration required. Everything else — Trading212 API extraction, multi-account orchestration, data normalization, scheduling, and the complete Investbrain integration pipeline — is developed and maintained here.
 
 
 If you like this project, consider supporting me:
