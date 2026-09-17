@@ -73,7 +73,7 @@ TICKER_TO_ISIN = {v: k for k, v in ISIN_TO_TICKER.items()}
 PROBLEM_SUFFIXES = {'.L', '.XC'}
 REMAPPED_SYMBOLS = {'VEVEL.XC', 'VWRLL.XC'}
 
-def fetch_yahoo_ticker(isin: str, ticker: str, currency: str) -> str:
+def fetch_yahoo_ticker(isin: str, ticker: str, currency: str) -> str | None:
     """
     Resolve an ISIN to a Yahoo Finance symbol, preferring EUR listings when applicable.
 
@@ -82,20 +82,35 @@ def fetch_yahoo_ticker(isin: str, ticker: str, currency: str) -> str:
     result. Other currencies use the first ISIN result. Returns None if no search
     produces a symbol.
     """
-    def search_yahoo(query):
+    def search_yahoo(query: str) -> list[dict]:
         """Return matching Yahoo Finance quotes, treating request errors as no matches."""
         url = f"https://query2.finance.yahoo.com/v1/finance/search?q={query}"
         req = urllib.request.Request(
             url, 
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         )
-        try:
-            with urllib.request.urlopen(req, timeout=10) as response:
-                data = json.loads(response.read().decode())
-                return data.get("quotes", [])
-        except Exception as e:
-            logging.error(f"Error fetching {query}: {e}")
-            return []
+        max_retries = 3
+        for attempt in range(max_retries + 1):
+            try:
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    data = json.loads(response.read().decode())
+                    return data.get("quotes", [])
+            except urllib.error.HTTPError as e:
+                if e.code == 429 and attempt < max_retries:
+                    retry_after = e.headers.get("Retry-After")
+                    if retry_after and retry_after.isdigit():
+                        wait = int(retry_after)
+                    else:
+                        wait = 2.0 * (2 ** attempt)
+                    logging.warning(f"HTTP 429 fetching {query}. Retrying in {wait}s...")
+                    time.sleep(wait)
+                    continue
+                logging.error(f"HTTPError fetching {query}: {e}")
+                return []
+            except Exception as e:
+                logging.error(f"Error fetching {query}: {e}")
+                return []
+        return []
 
     EUR_SUFFIXES = ['.DE', '.AS', '.PA', '.MI', '.MC']
     

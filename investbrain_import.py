@@ -297,6 +297,10 @@ def parse_csv_row(row: dict) -> Optional[dict]:
         'currency': currency,
         'isin': isin
     }
+    
+    tx_id = row.get('ID', '').strip()
+    if tx_id:
+        transaction['external_id'] = tx_id
 
     # Set price based on transaction type
     if transaction_type == 'BUY':
@@ -397,7 +401,11 @@ def fetch_existing_fingerprints(portfolio_id: str, api_url: str, headers: dict,
             # To ensure reliable deduplication against CSV data, we exclude price and round qty to 4 decimal places.
             qty_fingerprint = round(float(tx.get('quantity') or 0), 4)
             
-            fingerprints[(symbol, tx_type, date, qty_fingerprint)] += 1
+            ext_id = tx.get('external_id')
+            if ext_id:
+                fingerprints[ext_id] += 1
+            else:
+                fingerprints[(symbol, tx_type, date, qty_fingerprint)] += 1
             
         meta = data.get('meta', {})
         # Stop if we've reached the last page or next link is null
@@ -512,7 +520,12 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                 # Use a robust fingerprint: exclude price (due to Investbrain auto-FX conversion)
                 # and round quantity to 4 decimal places (to handle Investbrain DB truncation differences)
                 qty_fingerprint = round(float(transaction.get('quantity', 0)), 4)
-                fingerprint = (symbol, tx_type, date, qty_fingerprint)
+                
+                ext_id = transaction.get('external_id')
+                if ext_id:
+                    fingerprint = ext_id
+                else:
+                    fingerprint = (symbol, tx_type, date, qty_fingerprint)
                 
                 if not validate_only and existing_fingerprints.get(fingerprint, 0) > 0:
                     info(f"⏭️ Skipping duplicate: {symbol} {tx_type} {transaction.get('quantity')} on {date}")
@@ -610,7 +623,11 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                                             transaction['symbol'] = f"{base_sym}{next_suffix}"
                                             prev_symbol = transaction['symbol']
                                             
-                                            fingerprint = (transaction['symbol'], tx_type, date, qty_fingerprint)
+                                            ext_id = transaction.get('external_id')
+                                            if ext_id:
+                                                fingerprint = ext_id
+                                            else:
+                                                fingerprint = (transaction['symbol'], tx_type, date, qty_fingerprint)
                                             if existing_fingerprints.get(fingerprint, 0) > 0:
                                                 info(f"⏭️ Skipping duplicate: {transaction['symbol']} {tx_type} {transaction.get('quantity')} on {date}")
                                                 existing_fingerprints[fingerprint] -= 1
@@ -627,7 +644,11 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                                             # Recompute fingerprint using the updated symbol so any later duplicate
                                             # check in this row uses the corrected symbol (e.g. "DHER.DE") rather than
                                             # the stale original ("DHER"). Uses the same 4-field formula as above.
-                                            fingerprint = (transaction['symbol'], tx_type, date, qty_fingerprint)
+                                            ext_id = transaction.get('external_id')
+                                            if ext_id:
+                                                fingerprint = ext_id
+                                            else:
+                                                fingerprint = (transaction['symbol'], tx_type, date, qty_fingerprint)
                                             if existing_fingerprints.get(fingerprint, 0) > 0:
                                                 info(f"⏭️ Skipping duplicate: {transaction['symbol']} {tx_type} {transaction.get('quantity')} on {date}")
                                                 existing_fingerprints[fingerprint] -= 1
@@ -659,6 +680,38 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                     except requests.RequestException as e:
                         # Network-level error — retry with backoff
                         post_last_error = str(e)
+                        
+                        # Verify if the transaction was committed before resending
+                        try:
+                            check_url = f"{api_url.rstrip('/')}/api/transaction?portfolio_id={portfolio_id}&page=1"
+                            check_resp = requests.get(check_url, headers=headers, timeout=REQUEST_TIMEOUT)
+                            if check_resp.status_code == 200:
+                                check_data = check_resp.json()
+                                items = check_data.get('data', []) if isinstance(check_data, dict) and 'data' in check_data else (check_data if isinstance(check_data, list) else [])
+                                
+                                found_commit = False
+                                for item in items:
+                                    ext_id = transaction.get('external_id')
+                                    if ext_id and item.get('external_id') == ext_id:
+                                        found_commit = True
+                                        break
+                                    elif not ext_id:
+                                        item_qty = round(float(item.get('quantity', 0)), 4)
+                                        if (item.get('symbol') == transaction.get('symbol') and
+                                            item.get('transaction_type') == transaction.get('transaction_type') and
+                                            item.get('date', '')[:10] == transaction.get('date', '')[:10] and
+                                            item_qty == qty_fingerprint):
+                                            found_commit = True
+                                            break
+                                
+                                if found_commit:
+                                    info(f"Verified transaction {transaction['symbol']} was already committed. Skipping retry.")
+                                    success_count += 1
+                                    post_handled = True
+                                    break
+                        except Exception as check_e:
+                            debug(f"Failed to verify transaction status: {check_e}")
+
                         if post_attempt < max_post_retries:
                             wait = post_backoff_base * (2 ** post_attempt)
                             warn(f"Network error importing row {row_num}: {e}, "
