@@ -616,7 +616,10 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                                          f"retry {transport_attempt + 1}/{max_transport_retries} in {wait}s")
                                     time.sleep(wait)
                                     continue
-                                # Transport retries exhausted for this candidate — try next candidate
+                                # Transport retries exhausted — stop processing candidates
+                                error(f"Failed to import row {row_num} after {max_transport_retries} retries: {post_last_error}")
+                                error_count += 1
+                                post_handled = True
                                 break
                             else:
                                 # Permanent client error (4xx other than 429)
@@ -666,32 +669,37 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                             
                             # Verify if the transaction was committed before resending
                             try:
-                                check_url = f"{api_url.rstrip('/')}/api/transaction?portfolio_id={portfolio_id}&page=1"
-                                check_resp = requests.get(check_url, headers=headers, timeout=REQUEST_TIMEOUT)
-                                if check_resp.status_code == 200:
-                                    check_data = check_resp.json()
-                                    items = check_data.get('data', []) if isinstance(check_data, dict) and 'data' in check_data else (check_data if isinstance(check_data, list) else [])
-                                    
-                                    found_commit = False
-                                    for item in items:
-                                        ext_id = transaction.get('external_id')
-                                        if ext_id and item.get('external_id') == ext_id:
-                                            found_commit = True
-                                            break
-                                        elif not ext_id:
-                                            item_qty = round(float(item.get('quantity', 0)), 4)
-                                            if (item.get('symbol') == transaction.get('symbol') and
-                                                item.get('transaction_type') == transaction.get('transaction_type') and
-                                                item.get('date', '')[:10] == transaction.get('date', '')[:10] and
-                                                item_qty == qty_fingerprint):
-                                                found_commit = True
+                                found_commit = False
+                                ext_id = transaction.get('external_id')
+                                if ext_id:
+                                    check_page = 1
+                                    while True:
+                                        check_url = f"{api_url.rstrip('/')}/api/transaction?portfolio_id={portfolio_id}&page={check_page}"
+                                        check_resp = requests.get(check_url, headers=headers, timeout=REQUEST_TIMEOUT)
+                                        if check_resp.status_code == 200:
+                                            check_data = check_resp.json()
+                                            items = check_data.get('data', []) if isinstance(check_data, dict) and 'data' in check_data else (check_data if isinstance(check_data, list) else [])
+                                            
+                                            for item in items:
+                                                if item.get('external_id') == ext_id:
+                                                    found_commit = True
+                                                    break
+                                            
+                                            if found_commit:
                                                 break
-                                    
-                                    if found_commit:
-                                        info(f"Verified transaction {transaction['symbol']} was already committed. Skipping retry.")
-                                        success_count += 1
-                                        post_handled = True
-                                        break
+                                                
+                                            meta = check_data.get('meta', {})
+                                            if not check_data.get('links', {}).get('next') and (meta.get('last_page') is None or meta.get('current_page') == meta.get('last_page')):
+                                                break
+                                            check_page += 1
+                                        else:
+                                            break
+                                            
+                                if found_commit:
+                                    info(f"Verified transaction {transaction['symbol']} was already committed. Skipping retry.")
+                                    success_count += 1
+                                    post_handled = True
+                                    break
                             except Exception as check_e:
                                 debug(f"Failed to verify transaction status: {check_e}")
 
@@ -701,7 +709,10 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                                      f"retry {transport_attempt + 1}/{max_transport_retries} in {wait}s")
                                 time.sleep(wait)
                                 continue
-                            # Transport retries exhausted for this candidate — try next
+                            # Transport retries exhausted — stop processing candidates
+                            error(f"Failed to import row {row_num} after {max_transport_retries} retries: {post_last_error}")
+                            error_count += 1
+                            post_handled = True
                             break
 
                 # After all candidates exhausted
