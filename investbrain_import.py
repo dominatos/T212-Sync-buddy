@@ -524,18 +524,6 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                     dedup_skipped_count += 1
                     continue
 
-                # 3b. Delay for same-symbol same-day transactions to avoid race conditions
-                curr_symbol = transaction.get('symbol')
-                curr_date = transaction.get('date', '')[:10]
-                if (not validate_only
-                        and prev_symbol == curr_symbol
-                        and prev_date == curr_date
-                        and SAME_DAY_DELAY_SECONDS > 0):
-                    debug(f"Same-day same-symbol ({curr_symbol} on {curr_date}), delaying {SAME_DAY_DELAY_SECONDS}s")
-                    time.sleep(SAME_DAY_DELAY_SECONDS)
-                prev_symbol = curr_symbol
-                prev_date = curr_date
-
                 if validate_only:
                     info(f"[VALIDATE] Would import: {transaction}")
                     success_count += 1
@@ -577,7 +565,6 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                     transaction['symbol'] = candidate_sym
                     if candidate_idx > 0:
                         warn(f"💡 AUTODETECT: Trying EUR suffix candidate '{candidate_sym}' for row {row_num}...")
-                        prev_symbol = candidate_sym
                         
                         # Dedup check for the new candidate
                         fingerprint = (candidate_sym, tx_type, date, qty_fingerprint)
@@ -587,6 +574,14 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                             dedup_skipped_count += 1
                             post_handled = True
                             break
+
+                    # 3b. Delay for same-symbol same-day transactions to avoid race conditions
+                    curr_date = transaction.get('date', '')[:10]
+                    if (prev_symbol == candidate_sym
+                            and prev_date == curr_date
+                            and SAME_DAY_DELAY_SECONDS > 0):
+                        debug(f"Same-day same-symbol ({candidate_sym} on {curr_date}), delaying {SAME_DAY_DELAY_SECONDS}s")
+                        time.sleep(SAME_DAY_DELAY_SECONDS)
 
                     for transport_attempt in range(max_transport_retries + 1):
                         if post_handled:
@@ -606,6 +601,8 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                                      f"{transaction.get('cost_basis', transaction.get('sale_price'))} "
                                      f"{transaction['currency']}")
                                 success_count += 1
+                                prev_symbol = transaction['symbol']
+                                prev_date = transaction.get('date', '')[:10]
                                 post_handled = True
                                 break
                             elif response.status_code == 429 or response.status_code >= 500:
@@ -634,7 +631,6 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                                             if fallback_suffix and fallback_suffix not in sym and transport_attempt < max_transport_retries:
                                                 warn(f"💡 AUTODETECT: Symbol '{sym}' invalid. Automatically retrying with '{sym}{fallback_suffix}' fallback...")
                                                 transaction['symbol'] = f"{sym}{fallback_suffix}"
-                                                prev_symbol = transaction['symbol']
                                                 fingerprint = (transaction['symbol'], tx_type, date, qty_fingerprint)
                                                 if existing_fingerprints.get(fingerprint, 0) > 0:
                                                     info(f"⏭️ Skipping duplicate: {transaction['symbol']} {tx_type} {transaction.get('quantity')} on {date}")
