@@ -96,16 +96,27 @@ def fetch_yahoo_ticker(isin: str, ticker: str, currency: str) -> str | None:
                     data = json.loads(response.read().decode())
                     return data.get("quotes", [])
             except urllib.error.HTTPError as e:
-                if e.code == 429 and attempt < max_retries:
-                    retry_after = e.headers.get("Retry-After")
-                    if retry_after and retry_after.isdigit():
-                        wait = int(retry_after)
+                if (e.code == 429 or e.code >= 500) and attempt < max_retries:
+                    if e.code == 429:
+                        retry_after = e.headers.get("Retry-After")
+                        if retry_after and retry_after.isdigit():
+                            wait = int(retry_after)
+                        else:
+                            wait = 2.0 * (2 ** attempt)
                     else:
                         wait = 2.0 * (2 ** attempt)
-                    logging.warning(f"HTTP 429 fetching {query}. Retrying in {wait}s...")
+                    logging.warning(f"HTTP {e.code} fetching {query}. Retrying in {wait}s...")
                     time.sleep(wait)
                     continue
                 logging.error(f"HTTPError fetching {query}: {e}")
+                return []
+            except (urllib.error.URLError, socket.timeout, TimeoutError, ConnectionError) as e:
+                if attempt < max_retries:
+                    wait = 2.0 * (2 ** attempt)
+                    logging.warning(f"Transient error fetching {query}: {e}. Retrying in {wait}s...")
+                    time.sleep(wait)
+                    continue
+                logging.error(f"Error fetching {query} after {max_retries} retries: {e}")
                 return []
             except Exception as e:
                 logging.error(f"Error fetching {query}: {e}")
