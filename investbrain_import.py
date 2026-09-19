@@ -628,9 +628,16 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                                             break
                                         else:
                                             fallback_suffix = CURRENCY_SUFFIXES.get(curr)
-                                            if fallback_suffix and fallback_suffix not in sym and transport_attempt < max_transport_retries:
-                                                warn(f"💡 AUTODETECT: Symbol '{sym}' invalid. Automatically retrying with '{sym}{fallback_suffix}' fallback...")
-                                                transaction['symbol'] = f"{sym}{fallback_suffix}"
+                                            if fallback_suffix and transport_attempt < max_transport_retries:
+                                                # Build the qualified symbol: replace existing suffix or append
+                                                if '.' in sym:
+                                                    base = sym[:sym.rfind('.')]
+                                                    qualified_sym = f"{base}{fallback_suffix}"
+                                                else:
+                                                    qualified_sym = f"{sym}{fallback_suffix}"
+                                                if qualified_sym != sym:
+                                                    warn(f"💡 AUTODETECT: Symbol '{sym}' invalid. Automatically retrying with '{qualified_sym}' fallback...")
+                                                    transaction['symbol'] = qualified_sym
                                                 fingerprint = (transaction['symbol'], tx_type, date, qty_fingerprint)
                                                 if existing_fingerprints.get(fingerprint, 0) > 0:
                                                     info(f"⏭️ Skipping duplicate: {transaction['symbol']} {tx_type} {transaction.get('quantity')} on {date}")
@@ -694,6 +701,9 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                                 if found_commit:
                                     info(f"Verified transaction {transaction['symbol']} was already committed. Skipping retry.")
                                     success_count += 1
+                                    # Preserve same-day delay tracking for subsequent transactions
+                                    prev_symbol = transaction['symbol']
+                                    prev_date = transaction.get('date', '')[:10]
                                     post_handled = True
                                     break
                             except Exception as check_e:
