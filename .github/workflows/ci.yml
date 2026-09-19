@@ -107,9 +107,9 @@ jobs:
 
       - name: Verify image has required scripts
         run: |
-          docker run --rm t212-sync-buddy:test ls /app/run-all.sh
-          docker run --rm t212-sync-buddy:test ls /app/t212_fetch.py
-          docker run --rm t212-sync-buddy:test ls /app/investbrain_import.py
+          docker run --rm --entrypoint ls t212-sync-buddy:test /app/run-all.sh
+          docker run --rm --entrypoint ls t212-sync-buddy:test /app/t212_fetch.py
+          docker run --rm --entrypoint ls t212-sync-buddy:test /app/investbrain_import.py
           echo "All required scripts present in image"
 
   # ─── File Integrity ─────────────────────────────────────────

@@ -73,37 +73,89 @@ TICKER_TO_ISIN = {v: k for k, v in ISIN_TO_TICKER.items()}
 PROBLEM_SUFFIXES = {'.L', '.XC'}
 REMAPPED_SYMBOLS = {'VEVEL.XC', 'VWRLL.XC'}
 
-def fetch_yahoo_ticker(isin: str) -> str:
-    """Query Yahoo Finance Search API for the ISIN."""
-    url = f"https://query2.finance.yahoo.com/v1/finance/search?q={isin}"
-    req = urllib.request.Request(
-        url, 
-        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-    )
-    try:
-        # timeout=10 prevents indefinite blocking on network stalls
-        with urllib.request.urlopen(req, timeout=10) as response:
-            data = json.loads(response.read().decode())
-            quotes = data.get("quotes", [])
-            if quotes:
-                return quotes[0].get("symbol")
-    except socket.timeout:
-        logging.error(f"Timeout (10s) fetching ISIN {isin} from {url}")
-    except urllib.error.HTTPError as e:
-        logging.exception(f"HTTPError fetching ISIN {isin} from {url}. Status: {e.code}, Reason: {e.reason}")
-    except urllib.error.URLError as e:
-        logging.error(f"URLError fetching ISIN {isin} from {url}: {e.reason}")
-    except json.JSONDecodeError as e:
-        logging.exception(f"JSONDecodeError parsing response for ISIN {isin} from {url}")
-    except Exception as e:
-        logging.exception(f"Unexpected error fetching ISIN {isin} from {url}")
+def fetch_yahoo_ticker(isin: str, ticker: str, currency: str) -> str | None:
+    """
+    Resolve an ISIN to a Yahoo Finance symbol, preferring EUR listings when applicable.
+
+    EUR lookups prefer ISIN results ending in `.DE`, `.AS`, `.PA`, `.MI`, or `.MC`,
+    then search by ticker for such a listing before falling back to the first ISIN
+    result. Other currencies use the first ISIN result. Returns None if no search
+    produces a symbol.
+    """
+    def search_yahoo(query: str) -> list[dict]:
+        """Return matching Yahoo Finance quotes, treating request errors as no matches."""
+        url = f"https://query2.finance.yahoo.com/v1/finance/search?q={query}"
+        req = urllib.request.Request(
+            url, 
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        )
+        max_retries = 3
+        for attempt in range(max_retries + 1):
+            try:
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    data = json.loads(response.read().decode())
+                    return data.get("quotes", [])
+            except urllib.error.HTTPError as e:
+                if (e.code == 429 or e.code >= 500) and attempt < max_retries:
+                    if e.code == 429:
+                        retry_after = e.headers.get("Retry-After")
+                        if retry_after and retry_after.isdigit():
+                            wait = int(retry_after)
+                        else:
+                            wait = 2.0 * (2 ** attempt)
+                    else:
+                        wait = 2.0 * (2 ** attempt)
+                    logging.warning(f"HTTP {e.code} fetching {query}. Retrying in {wait}s...")
+                    time.sleep(wait)
+                    continue
+                logging.error(f"HTTPError fetching {query}: {e}")
+                return []
+            except (urllib.error.URLError, socket.timeout, TimeoutError, ConnectionError) as e:
+                if attempt < max_retries:
+                    wait = 2.0 * (2 ** attempt)
+                    logging.warning(f"Transient error fetching {query}: {e}. Retrying in {wait}s...")
+                    time.sleep(wait)
+                    continue
+                logging.error(f"Error fetching {query} after {max_retries} retries: {e}")
+                return []
+            except Exception as e:
+                logging.error(f"Error fetching {query}: {e}")
+                return []
+        return []
+
+    EUR_SUFFIXES = ['.DE', '.AS', '.PA', '.MI', '.MC']
+    
+    isin_quotes = search_yahoo(isin)
+    if isin_quotes:
+        for q in isin_quotes:
+            sym = q.get("symbol", "")
+            if currency == "EUR":
+                if any(sym.endswith(s) for s in EUR_SUFFIXES):
+                    return sym
+            else:
+                return sym
+                
+    if ticker and currency == "EUR":
+        ticker_quotes = search_yahoo(ticker)
+        if ticker_quotes:
+            for q in ticker_quotes:
+                sym = q.get("symbol", "")
+                if any(sym.endswith(s) for s in EUR_SUFFIXES) and sym.startswith(ticker):
+                    return sym
+                    
+    if isin_quotes:
+        return isin_quotes[0].get("symbol")
+        
     return None
 
 def process_csv(input_file: str, output_file: str) -> tuple[int, bool]:
     """
     Map tickers in a Trading212 export CSV to Yahoo Finance symbols and write the transformed rows to the specified output CSV.
     
-    Processes each row in input_file: if an ISIN is present and mapped in `ISIN_TO_TICKER`, replaces the `Ticker` with the mapped symbol; otherwise, when the ticker lacks a dot, appends an exchange suffix based on the row currency (e.g., GBP→.L, CHF→.SW, CAD→.TO, AUD→.AX, JPY→.T). EUR is intentionally left unsuffixed. Rows with an empty `Ticker` are written unchanged.
+    For an unmapped ISIN, queries Yahoo Finance and adds any resolved symbol to the
+    in-memory `ISIN_TO_TICKER` mapping. Applies explicit ISIN mappings before adding a
+    currency-specific suffix to eligible unmapped, non-EUR tickers. Rows with an empty
+    ticker are written unchanged unless their ISIN can be resolved.
     
     Parameters:
         input_file (str): Path to the input CSV file to read.
@@ -131,7 +183,7 @@ def process_csv(input_file: str, output_file: str) -> tuple[int, bool]:
             if isin and isin not in ISIN_TO_TICKER:
                 print(f"  🔍 Unmapped ISIN {isin}. Querying Yahoo Finance API...")
                 time.sleep(0.5)  # Be gentle to Yahoo API
-                fetched_ticker = fetch_yahoo_ticker(isin)
+                fetched_ticker = fetch_yahoo_ticker(isin, ticker, currency)
                 if fetched_ticker:
                     print(f"  ✅ Auto-mapped {isin} -> {fetched_ticker}")
                     ISIN_TO_TICKER[isin] = fetched_ticker

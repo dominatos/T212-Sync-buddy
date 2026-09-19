@@ -297,6 +297,10 @@ def parse_csv_row(row: dict) -> Optional[dict]:
         'currency': currency,
         'isin': isin
     }
+    
+    tx_id = (row.get('ID') or '').strip()
+    if tx_id:
+        transaction['external_id'] = tx_id
 
     # Set price based on transaction type
     if transaction_type == 'BUY':
@@ -412,7 +416,7 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
     """
     Import Trading212 transactions from a CSV file into the Investbrain portfolio.
     
-    Parses the CSV, normalizes and deduplicates transactions, applies the intraday BUY->D-1 workaround when needed, and posts each transaction to the Investbrain `/api/transaction` endpoint (unless `validate_only` is True, in which case imports are simulated and not sent).
+    Parses the CSV, normalizes and deduplicates transactions, applies the intraday BUY->D-1 workaround when needed, and posts each transaction to the Investbrain `/api/transaction` endpoint (unless `validate_only` is True, in which case imports are simulated and not sent). When a 422 response indicates that a provided EUR symbol is invalid, retries the transaction with supported European exchange suffixes in sequence.
     
     Parameters:
         csv_path (str): Path to the Trading212 CSV file.
@@ -520,18 +524,6 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                     dedup_skipped_count += 1
                     continue
 
-                # 3b. Delay for same-symbol same-day transactions to avoid race conditions
-                curr_symbol = transaction.get('symbol')
-                curr_date = transaction.get('date', '')[:10]
-                if (not validate_only
-                        and prev_symbol == curr_symbol
-                        and prev_date == curr_date
-                        and SAME_DAY_DELAY_SECONDS > 0):
-                    debug(f"Same-day same-symbol ({curr_symbol} on {curr_date}), delaying {SAME_DAY_DELAY_SECONDS}s")
-                    time.sleep(SAME_DAY_DELAY_SECONDS)
-                prev_symbol = curr_symbol
-                prev_date = curr_date
-
                 if validate_only:
                     info(f"[VALIDATE] Would import: {transaction}")
                     success_count += 1
@@ -540,106 +532,205 @@ def import_to_investbrain(csv_path: str, portfolio_id: str, api_url: str, api_to
                 # 3c. Send to Investbrain API — with retry for transient failures
                 # Retry policy (consistent with fetch_existing_fingerprints):
                 #   - Transient errors (HTTP 429, 5xx, network exceptions): retry up to
-                #     max_post_retries times with exponential backoff.
-                #   - Permanent client errors (4xx other than 429): count as error immediately.
+                #     max_transport_retries times with exponential backoff per candidate.
+                #   - Permanent client errors (4xx other than 429/422-symbol): count as error immediately.
+                #   - EUR symbols: try original then each EUR suffix candidate before giving up.
                 #   - Retries exhausted: count as error, continue to next transaction
                 #     (one failed POST should not block the rest of the import).
-                max_post_retries = 3
+                max_transport_retries = 3
                 post_backoff_base = 2.0
                 url = f"{api_url.rstrip('/')}/api/transaction"
                 post_last_error = None
                 post_handled = False
 
-                for post_attempt in range(max_post_retries + 1):
-                    try:
-                        trace(f"POST transaction {row_num}: {transaction.get('symbol')} "
-                              f"{transaction.get('transaction_type')} (attempt {post_attempt + 1})")
+                # Build the list of symbol candidates to try
+                curr = transaction.get('currency', '')
+                original_sym = transaction.get('symbol', '')
+                
+                if curr == 'EUR':
+                    EUR_SUFFIXES = ['.DE', '.AS', '.PA', '.MI', '.MC']
+                    # Strip any existing exchange suffix (EUR or otherwise like .L, .XC)
+                    base_sym = original_sym
+                    dot_pos = original_sym.rfind('.')
+                    if dot_pos > 0:
+                        base_sym = original_sym[:dot_pos]
+                    symbol_candidates = [original_sym] + [f"{base_sym}{s}" for s in EUR_SUFFIXES if f"{base_sym}{s}" != original_sym]
+                else:
+                    symbol_candidates = [original_sym]
 
-                        response = requests.post(url, json=transaction, headers=headers,
-                                                 timeout=REQUEST_TIMEOUT)
-                        trace(f"  Response: {response.status_code}")
-
-                        if response.status_code in [200, 201]:
-                            # Success — record and break out of retry loop
-                            info(f"Imported: {transaction['symbol']} {transaction['transaction_type']} "
-                                 f"{transaction['quantity']} @ "
-                                 f"{transaction.get('cost_basis', transaction.get('sale_price'))} "
-                                 f"{transaction['currency']}")
-                            success_count += 1
+                for candidate_idx, candidate_sym in enumerate(symbol_candidates):
+                    if post_handled:
+                        break
+                    
+                    transaction['symbol'] = candidate_sym
+                    if candidate_idx > 0:
+                        warn(f"💡 AUTODETECT: Trying EUR suffix candidate '{candidate_sym}' for row {row_num}...")
+                        
+                        # Dedup check for the new candidate
+                        fingerprint = (candidate_sym, tx_type, date, qty_fingerprint)
+                        if existing_fingerprints.get(fingerprint, 0) > 0:
+                            info(f"⏭️ Skipping duplicate: {candidate_sym} {tx_type} {transaction.get('quantity')} on {date}")
+                            existing_fingerprints[fingerprint] -= 1
+                            dedup_skipped_count += 1
                             post_handled = True
                             break
-                        elif response.status_code == 429 or response.status_code >= 500:
-                            # Transient server / rate-limit error — retry with backoff
-                            post_last_error = f"HTTP {response.status_code} - {response.text}"
-                            if post_attempt < max_post_retries:
-                                wait = post_backoff_base * (2 ** post_attempt)
-                                warn(f"Transient error ({response.status_code}) importing row {row_num}, "
-                                     f"retry {post_attempt + 1}/{max_post_retries} in {wait}s")
+
+                    # 3b. Delay for same-symbol same-day transactions to avoid race conditions
+                    curr_date = transaction.get('date', '')[:10]
+                    if (prev_symbol == candidate_sym
+                            and prev_date == curr_date
+                            and SAME_DAY_DELAY_SECONDS > 0):
+                        debug(f"Same-day same-symbol ({candidate_sym} on {curr_date}), delaying {SAME_DAY_DELAY_SECONDS}s")
+                        time.sleep(SAME_DAY_DELAY_SECONDS)
+
+                    for transport_attempt in range(max_transport_retries + 1):
+                        if post_handled:
+                            break
+                        try:
+                            trace(f"POST transaction {row_num}: {transaction.get('symbol')} "
+                                  f"{transaction.get('transaction_type')} (candidate {candidate_idx + 1}/{len(symbol_candidates)}, "
+                                  f"attempt {transport_attempt + 1})")
+
+                            response = requests.post(url, json=transaction, headers=headers,
+                                                     timeout=REQUEST_TIMEOUT)
+                            trace(f"  Response: {response.status_code}")
+
+                            if response.status_code in [200, 201]:
+                                info(f"Imported: {transaction['symbol']} {transaction['transaction_type']} "
+                                     f"{transaction['quantity']} @ "
+                                     f"{transaction.get('cost_basis', transaction.get('sale_price'))} "
+                                     f"{transaction['currency']}")
+                                success_count += 1
+                                prev_symbol = transaction['symbol']
+                                prev_date = transaction.get('date', '')[:10]
+                                post_handled = True
+                                break
+                            elif response.status_code == 429 or response.status_code >= 500:
+                                post_last_error = f"HTTP {response.status_code} - {response.text}"
+                                if transport_attempt < max_transport_retries:
+                                    wait = post_backoff_base * (2 ** transport_attempt)
+                                    warn(f"Transient error ({response.status_code}) importing row {row_num}, "
+                                         f"retry {transport_attempt + 1}/{max_transport_retries} in {wait}s")
+                                    time.sleep(wait)
+                                    continue
+                                # Transport retries exhausted — stop processing candidates
+                                error(f"Failed to import row {row_num} after {max_transport_retries} retries: {post_last_error}")
+                                error_count += 1
+                                post_handled = True
+                                break
+                            else:
+                                # Permanent client error (4xx other than 429)
+                                if response.status_code == 422:
+                                    sym = transaction.get('symbol', '')
+                                    if "symbol provided" in response.text:
+                                        if curr == 'EUR':
+                                            # Try next EUR suffix candidate
+                                            break
+                                        else:
+                                            fallback_suffix = CURRENCY_SUFFIXES.get(curr)
+                                            if fallback_suffix and transport_attempt < max_transport_retries:
+                                                # Build the qualified symbol: replace existing suffix or append
+                                                if '.' in sym:
+                                                    base = sym[:sym.rfind('.')]
+                                                    qualified_sym = f"{base}{fallback_suffix}"
+                                                else:
+                                                    qualified_sym = f"{sym}{fallback_suffix}"
+                                                if qualified_sym != sym:
+                                                    warn(f"💡 AUTODETECT: Symbol '{sym}' invalid. Automatically retrying with '{qualified_sym}' fallback...")
+                                                    transaction['symbol'] = qualified_sym
+                                                fingerprint = (transaction['symbol'], tx_type, date, qty_fingerprint)
+                                                if existing_fingerprints.get(fingerprint, 0) > 0:
+                                                    info(f"⏭️ Skipping duplicate: {transaction['symbol']} {tx_type} {transaction.get('quantity')} on {date}")
+                                                    existing_fingerprints[fingerprint] -= 1
+                                                    dedup_skipped_count += 1
+                                                    post_handled = True
+                                                    break
+                                                continue  # Retry with the modified symbol
+
+                                        error(f"Failed to import row {row_num}: HTTP {response.status_code} - {response.text}")
+                                        warn(f"💡 ACTION REQUIRED: Symbol '{sym}' is invalid on Yahoo Finance.")
+                                        warn(f"   Please look up its ISIN and add it to 'isin-mapping.json' mapped to its correct suffix (e.g. '{sym}.DE' or '{sym}.L').")
+                                        error_count += 1
+                                        post_handled = True
+                                        break
+                                    
+                                    if "quantity must not be greater" in response.text:
+                                        error(f"Failed to import row {row_num}: HTTP {response.status_code} - {response.text}")
+                                        warn(f"💡 NOTE: This quantity error is likely a cascading failure because an earlier BUY order for '{sym}' failed.")
+                                        error_count += 1
+                                        post_handled = True
+                                        break
+
+                                # If not handled by autodetection retry/break above
+                                error(f"Failed to import row {row_num}: HTTP {response.status_code} - {response.text}")
+                                error_count += 1
+                                post_handled = True
+                                break
+
+                        except requests.RequestException as e:
+                            post_last_error = str(e)
+                            
+                            # Verify if the transaction was committed before resending
+                            try:
+                                found_commit = False
+                                ext_id = transaction.get('external_id')
+                                if ext_id:
+                                    check_page = 1
+                                    while True:
+                                        check_url = f"{api_url.rstrip('/')}/api/transaction?portfolio_id={portfolio_id}&page={check_page}"
+                                        check_resp = requests.get(check_url, headers=headers, timeout=REQUEST_TIMEOUT)
+                                        if check_resp.status_code == 200:
+                                            check_data = check_resp.json()
+                                            items = check_data.get('data', []) if isinstance(check_data, dict) and 'data' in check_data else (check_data if isinstance(check_data, list) else [])
+                                            
+                                            for item in items:
+                                                if item.get('external_id') == ext_id:
+                                                    found_commit = True
+                                                    break
+                                            
+                                            if found_commit:
+                                                break
+                                                
+                                            meta = check_data.get('meta', {})
+                                            if not check_data.get('links', {}).get('next') and (meta.get('last_page') is None or meta.get('current_page') == meta.get('last_page')):
+                                                break
+                                            check_page += 1
+                                        else:
+                                            break
+                                            
+                                if found_commit:
+                                    info(f"Verified transaction {transaction['symbol']} was already committed. Skipping retry.")
+                                    success_count += 1
+                                    # Preserve same-day delay tracking for subsequent transactions
+                                    prev_symbol = transaction['symbol']
+                                    prev_date = transaction.get('date', '')[:10]
+                                    post_handled = True
+                                    break
+                            except Exception as check_e:
+                                debug(f"Failed to verify transaction status: {check_e}")
+
+                            if transport_attempt < max_transport_retries:
+                                wait = post_backoff_base * (2 ** transport_attempt)
+                                warn(f"Network error importing row {row_num}: {e}, "
+                                     f"retry {transport_attempt + 1}/{max_transport_retries} in {wait}s")
                                 time.sleep(wait)
                                 continue
-                            # Retries exhausted — fall through
-                        else:
-                            # Permanent client error (4xx other than 429)
-                            
-                            # Autodetection hints for common validation errors
-                            if response.status_code == 422:
-                                sym = transaction.get('symbol', '')
-                                if "symbol provided" in response.text:
-                                    curr = transaction.get('currency', '')
-                                    fallback_suffix = CURRENCY_SUFFIXES.get(curr)
-                                    
-                                    # If it failed without a suffix, try appending the currency's default suffix
-                                    if fallback_suffix and fallback_suffix not in sym and curr != 'EUR' and post_attempt < max_post_retries:
-                                        warn(f"💡 AUTODETECT: Symbol '{sym}' invalid. Automatically retrying with '{sym}{fallback_suffix}' fallback...")
-                                        transaction['symbol'] = f"{sym}{fallback_suffix}"
-                                        prev_symbol = transaction['symbol']
-                                        # Recompute fingerprint using the updated symbol so any later duplicate
-                                        # check in this row uses the corrected symbol (e.g. "DHER.DE") rather than
-                                        # the stale original ("DHER"). Uses the same 4-field formula as above.
-                                        fingerprint = (transaction['symbol'], tx_type, date, qty_fingerprint)
-                                        if existing_fingerprints.get(fingerprint, 0) > 0:
-                                            info(f"⏭️ Skipping duplicate: {transaction['symbol']} {tx_type} {transaction.get('quantity')} on {date}")
-                                            existing_fingerprints[fingerprint] -= 1
-                                            dedup_skipped_count += 1
-                                            post_handled = True
-                                            break
-                                        continue  # Retry with the modified symbol
-                                        
-                                    error(f"Failed to import row {row_num}: HTTP {response.status_code} - {response.text}")
-                                    warn(f"💡 ACTION REQUIRED: Symbol '{sym}' is invalid on Yahoo Finance.")
-                                    warn(f"   Please look up its ISIN and add it to 'isin-mapping.json' mapped to its correct suffix (e.g. '{sym}.DE' or '{sym}.L').")
-                                    error_count += 1
-                                    post_handled = True
-                                    break
-                                
-                                if "quantity must not be greater" in response.text:
-                                    error(f"Failed to import row {row_num}: HTTP {response.status_code} - {response.text}")
-                                    warn(f"💡 NOTE: This quantity error is likely a cascading failure because an earlier BUY order for '{sym}' failed.")
-                                    error_count += 1
-                                    post_handled = True
-                                    break
-
-                            # If not handled by autodetection retry/break above
-                            error(f"Failed to import row {row_num}: HTTP {response.status_code} - {response.text}")
+                            # Transport retries exhausted — stop processing candidates
+                            error(f"Failed to import row {row_num} after {max_transport_retries} retries: {post_last_error}")
                             error_count += 1
-                            post_handled = True  # Flag to skip exhaustion block below
+                            post_handled = True
                             break
 
-                    except requests.RequestException as e:
-                        # Network-level error — retry with backoff
-                        post_last_error = str(e)
-                        if post_attempt < max_post_retries:
-                            wait = post_backoff_base * (2 ** post_attempt)
-                            warn(f"Network error importing row {row_num}: {e}, "
-                                 f"retry {post_attempt + 1}/{max_post_retries} in {wait}s")
-                            time.sleep(wait)
-                            continue
-                        # Retries exhausted — fall through
-
-                # If all retries were exhausted without success or permanent error
-                if not post_handled and post_last_error is not None:
-                    error(f"Failed to import row {row_num} after {max_post_retries} retries: {post_last_error}")
-                    error_count += 1
+                # After all candidates exhausted
+                if not post_handled:
+                    if curr == 'EUR' and len(symbol_candidates) > 1:
+                        error(f"Failed to import row {row_num}: all EUR suffix candidates exhausted for '{original_sym}'")
+                        warn(f"💡 ACTION REQUIRED: Symbol '{original_sym}' is invalid on Yahoo Finance.")
+                        warn(f"   Please look up its ISIN and add it to 'isin-mapping.json' mapped to its correct suffix.")
+                        error_count += 1
+                    elif post_last_error is not None:
+                        error(f"Failed to import row {row_num} after {max_transport_retries} retries: {post_last_error}")
+                        error_count += 1
 
     except FileNotFoundError:
         error(f"CSV file not found: {csv_path}")

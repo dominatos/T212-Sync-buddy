@@ -720,5 +720,146 @@ class TestCsvParsingValidation(unittest.TestCase):
         finally:
             os.unlink(csv_path)
 
+# =============================================================================
+# 5. Regression: found_commit recovery updates prev_symbol/prev_date
+# =============================================================================
+class TestFoundCommitRecoveryUpdatesDelayTracking(unittest.TestCase):
+    """Regression: found_commit recovery branch must set prev_symbol/prev_date."""
+
+    @patch("investbrain_import.time.sleep")
+    @patch("investbrain_import.requests.get")
+    @patch("investbrain_import.requests.post")
+    @patch("investbrain_import.fetch_existing_fingerprints", return_value=Counter())
+    def test_found_commit_preserves_same_day_delay(self, mock_fetch, mock_post, mock_get, mock_sleep):
+        """A recovered commit must update prev_symbol/prev_date so the next
+        same-symbol same-day transaction receives the configured delay.
+
+        Scenario:
+        - CSV contains two AAPL BUY rows on the same date, each with an external_id.
+        - First POST raises ConnectionError; the GET check finds the transaction
+          already committed (found_commit = True).
+        - Second POST succeeds (201).
+        - Assert: time.sleep is called once for the second transaction,
+          proving prev_symbol/prev_date were updated by the found_commit path.
+        """
+        # Build CSV with two same-symbol same-day transactions (each with ID column)
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("Action,Time,Ticker,No. of shares,Price / share,Currency (Price / share),ID\n")
+            f.write("Market buy,2025-01-15 10:00:00,AAPL,10,150.00,USD,ext-tx-001\n")
+            f.write("Market buy,2025-01-15 11:00:00,AAPL,5,155.00,USD,ext-tx-002\n")
+            csv_path = f.name
+
+        try:
+            # First POST: network error → triggers found_commit recovery
+            # GET check: returns the transaction as already committed
+            # Second POST: success
+            mock_post.side_effect = [
+                requests.exceptions.ConnectionError("Connection reset"),
+                _mock_response(201, {}),
+            ]
+            check_resp = _mock_response(200, {
+                "data": [{"external_id": "ext-tx-001"}],
+                "meta": {"current_page": 1, "last_page": 1},
+                "links": {"next": None},
+            })
+            mock_get.return_value = check_resp
+
+            success, errors, non_trade_skipped, dedup_skipped = investbrain_import.import_to_investbrain(
+                csv_path, PORTFOLIO, API_URL, "test-token"
+            )
+            self.assertEqual(success, 2)
+            self.assertEqual(errors, 0)
+            # First POST failed with ConnectionError; second POST succeeded
+            self.assertEqual(mock_post.call_count, 2)
+            # GET was called to verify the first transaction
+            mock_get.assert_called_once()
+            # The same-day delay must have been applied for the second transaction
+            mock_sleep.assert_called_once_with(investbrain_import.SAME_DAY_DELAY_SECONDS)
+        finally:
+            os.unlink(csv_path)
+
+
+# =============================================================================
+# 6. Regression: 422 fallback replaces existing suffix (no double-suffix)
+# =============================================================================
+class Test422FallbackReplacesExistingSuffix(unittest.TestCase):
+    """Regression: non-EUR 422 fallback must replace an existing exchange suffix,
+    not append a second one (e.g. ABC.DE + .L -> ABC.L, not ABC.DE.L)."""
+
+    @patch("investbrain_import.time.sleep")
+    @patch("investbrain_import.requests.post")
+    @patch("investbrain_import.fetch_existing_fingerprints", return_value=Counter())
+    def test_qualified_symbol_gets_suffix_replaced(self, mock_fetch, mock_post, mock_sleep):
+        """When a non-EUR symbol already carries an exchange suffix (e.g. ABC.DE),
+        the fallback must strip the old suffix and apply the new one.
+
+        Scenario:
+        - CSV row: BUY ABC.DE, currency GBP
+        - First POST: 422 'symbol provided' error
+        - Second POST: success (201)
+        - Assert: second POST was sent with symbol ABC.L (not ABC.DE.L)
+        """
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("Action,Time,Ticker,No. of shares,Price / share,Currency (Price / share)\n")
+            f.write("Market buy,2025-01-15 10:00:00,ABC.DE,10,50.00,GBP\n")
+            csv_path = f.name
+
+        try:
+            resp_422 = _mock_response(422)
+            resp_422.text = '{"message":"symbol provided is invalid"}'
+            mock_post.side_effect = [
+                resp_422,
+                _mock_response(201, {}),
+            ]
+
+            success, errors, non_trade_skipped, dedup_skipped = investbrain_import.import_to_investbrain(
+                csv_path, PORTFOLIO, API_URL, "test-token"
+            )
+            self.assertEqual(success, 1)
+            self.assertEqual(errors, 0)
+            self.assertEqual(mock_post.call_count, 2)
+            # Inspect the payload sent on the second POST (json= is a keyword arg)
+            sent_payload = mock_post.call_args_list[1][1]['json']
+            self.assertEqual(sent_payload['symbol'], 'ABC.L')
+        finally:
+            os.unlink(csv_path)
+
+    @patch("investbrain_import.time.sleep")
+    @patch("investbrain_import.requests.post")
+    @patch("investbrain_import.fetch_existing_fingerprints", return_value=Counter())
+    def test_unqualified_symbol_gets_suffix_appended(self, mock_fetch, mock_post, mock_sleep):
+        """When a non-EUR symbol has no existing suffix, the fallback appends normally.
+
+        Scenario:
+        - CSV row: BUY ABC, currency GBP
+        - First POST: 422 'symbol provided' error
+        - Second POST: success (201)
+        - Assert: second POST was sent with symbol ABC.L
+        """
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("Action,Time,Ticker,No. of shares,Price / share,Currency (Price / share)\n")
+            f.write("Market buy,2025-01-15 10:00:00,ABC,10,50.00,GBP\n")
+            csv_path = f.name
+
+        try:
+            resp_422 = _mock_response(422)
+            resp_422.text = '{"message":"symbol provided is invalid"}'
+            mock_post.side_effect = [
+                resp_422,
+                _mock_response(201, {}),
+            ]
+
+            success, errors, non_trade_skipped, dedup_skipped = investbrain_import.import_to_investbrain(
+                csv_path, PORTFOLIO, API_URL, "test-token"
+            )
+            self.assertEqual(success, 1)
+            self.assertEqual(errors, 0)
+            self.assertEqual(mock_post.call_count, 2)
+            sent_payload = mock_post.call_args_list[1][1]['json']
+            self.assertEqual(sent_payload['symbol'], 'ABC.L')
+        finally:
+            os.unlink(csv_path)
+
+
 if __name__ == "__main__":
     unittest.main()
