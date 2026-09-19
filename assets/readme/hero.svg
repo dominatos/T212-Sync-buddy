@@ -42,8 +42,8 @@
     <text x="80" y="80" fill="#8b949e" font-family="ui-monospace, SFMono-Regular, monospace" font-size="12" text-anchor="middle">API Source</text>
     
     <!-- Arrow -->
-    <path d="M 160 60 L 220 60" stroke="#58a6ff" stroke-width="2" stroke-dasharray="4 4" fill="none"/>
-    <circle cx="220" cy="60" r="4" fill="#58a6ff"/>
+    <path d="M 160 60 L 240 140" stroke="#58a6ff" stroke-width="2" stroke-dasharray="4 4" fill="none"/>
+    <circle cx="240" cy="140" r="4" fill="#58a6ff"/>
     
     <!-- Sync-buddy Core Node -->
     <rect x="150" y="140" width="180" height="100" rx="16" fill="#161b22" stroke="url(#accentGrad)" stroke-width="3"/>
